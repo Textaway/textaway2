@@ -1,0 +1,113 @@
+"use client";
+
+import React, { useState, useEffect } from "react";
+import { Room } from "@/entities/Room";
+import { RoomMember } from "@/entities/RoomMember";
+import { User } from "@/entities/User";
+import { useRouter } from "next/navigation";
+import { createPageUrl } from "@/utils";
+import { useToast } from "@/components/ui/use-toast";
+import useAppLevelAuth from "@/hooks/useAppLevelAuth";
+import { Users, MessageSquare, Hash } from "lucide-react";
+import RoomCard from "../components/rooms/RoomCard";
+import JoinRoomDialog from "../components/rooms/JoinRoomDialog";
+
+export default function HomePage() {
+  const { isLoggedIn } = useAppLevelAuth();
+  const { toast } = useToast();
+  const router = useRouter();
+  const [myRooms, setMyRooms] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [currentUser, setCurrentUser] = useState<any>(null);
+
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    loadData();
+  }, [isLoggedIn]);
+
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const user = await User.me();
+      setCurrentUser(user);
+
+      const memberships = await RoomMember.filter({ userId: user.id });
+      
+      if (memberships && memberships.length > 0) {
+        const roomPromises = memberships.map(async (membership) => {
+          try {
+            const room = await Room.get(membership.roomId);
+            return room;
+          } catch (error) {
+            // Assuming a 404-like error means the room is gone.
+            // Let's clean up the stale membership record.
+            console.warn(`Stale membership found for deleted room ${membership.roomId}. Deleting membership ${membership.id}.`);
+            await RoomMember.delete(membership.id);
+            return null;
+          }
+        });
+        const rooms = await Promise.all(roomPromises);
+        setMyRooms(rooms.filter(Boolean)); // filter(Boolean) removes null/undefined
+      } else {
+        setMyRooms([]);
+      }
+    } catch (error: any) {
+      // If user not found, logout
+      if (error?.response?.status === 404 || error?.message?.includes('not found') || error?.message?.includes('404')) {
+        console.warn("User not found in Home, logging out...");
+        await useAppLevelAuth().logout(); // Use hook directly if needed, or rely on Layout
+        router.push(createPageUrl("login"));
+        return;
+      }
+      console.error('Error loading data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!isLoggedIn) return null;
+
+  return (
+    <div className="container mx-auto px-4 py-8 pb-24 md:pb-8">
+      <div className="max-w-6xl mx-auto">
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold mb-2">My Rooms</h1>
+          <p className="text-neutral-400">Your active chat rooms and communities</p>
+        </div>
+
+        <div className="mb-6">
+          <JoinRoomDialog onJoinSuccess={loadData} />
+        </div>
+
+        {loading ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {[...Array(6)].map((_, i) => (
+              <div key={i} className="h-48 bg-neutral-900 rounded-lg animate-pulse border border-neutral-800"></div>
+            ))}
+          </div>
+        ) : myRooms.length === 0 ? (
+          <div className="text-center py-16 border border-neutral-800 rounded-lg bg-neutral-900/50">
+            <MessageSquare className="h-12 w-12 text-neutral-600 mx-auto mb-4" />
+            <h3 className="text-xl font-semibold mb-2">No rooms yet</h3>
+            <p className="text-neutral-400 mb-6">Join a room with an invite code or explore public rooms</p>
+            <div className="flex items-center justify-center gap-3">
+              <JoinRoomDialog onJoinSuccess={loadData} />
+              <button
+                onClick={() => router.push(createPageUrl('Explore'))}
+                className="px-4 py-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 transition-colors font-semibold"
+              >
+                Explore Rooms
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {myRooms.map((room) => (
+              <RoomCard key={room.id} room={room} onClick={() => router.push(createPageUrl('Room', { id: room.id }))} />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
