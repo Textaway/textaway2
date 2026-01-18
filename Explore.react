@@ -1,0 +1,284 @@
+"use client";
+
+import React, { useState, useEffect } from "react";
+import { Room } from "@/entities/Room";
+import { RoomMember } from "@/entities/RoomMember";
+import { User } from "@/entities/User";
+import { Bot } from "@/entities/Bot";
+import { BotInstance } from "@/entities/BotInstance";
+import { ActivityLog } from "@/entities/ActivityLog";
+import { useRouter } from "next/navigation";
+import { createPageUrl } from "@/utils";
+import { useToast } from "@/components/ui/use-toast";
+import useAppLevelAuth from "@/hooks/useAppLevelAuth";
+import { Search, Filter, Bot as BotIcon, Plus } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
+import RoomCard from "../components/rooms/RoomCard";
+import BotCard from "../components/bots/BotCard";
+import CreateBotDialog from "../components/bots/CreateBotDialog";
+
+const CATEGORIES = [
+  { value: "all", label: "All Categories" },
+  { value: "general", label: "General" },
+  { value: "gaming", label: "Gaming" },
+  { value: "tech", label: "Tech" },
+  { value: "music", label: "Music" },
+  { value: "art", label: "Art" },
+  { value: "sports", label: "Sports" },
+  { value: "education", label: "Education" },
+  { value: "other", label: "Other" }
+];
+
+const BOT_CATEGORIES = [
+  { value: "all", label: "All Categories" },
+  { value: "moderation", label: "Moderation" },
+  { value: "utility", label: "Utility" },
+  { value: "fun", label: "Fun" },
+  { value: "music", label: "Music" },
+  { value: "gaming", label: "Gaming" },
+  { value: "other", label: "Other" }
+];
+
+export default function ExplorePage() {
+  const { isLoggedIn } = useAppLevelAuth();
+  const { toast } = useToast();
+  const router = useRouter();
+  const [rooms, setRooms] = useState<any[]>([]);
+  const [bots, setBots] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState("all");
+  const [selectedBotCategory, setSelectedBotCategory] = useState("all");
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [myRoomIds, setMyRoomIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    loadData();
+  }, [isLoggedIn]);
+
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const user = await User.me();
+      setCurrentUser(user);
+
+      const memberships = await RoomMember.filter({ userId: user.id });
+      setMyRoomIds(memberships.map(m => m.roomId));
+
+      const allRooms = await Room.filter({ isPublic: true });
+      setRooms(allRooms || []);
+      
+      const allBots = await Bot.filter({ botType: "community", isActive: true });
+      setBots(allBots || []);
+    } catch (error: any) {
+      // If user not found, logout
+      if (error?.response?.status === 404 || error?.message?.includes('not found') || error?.message?.includes('404')) {
+        console.warn("User not found in Explore, logging out...");
+        router.push(createPageUrl("login"));
+        return;
+      }
+      console.error('Error loading rooms:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const filteredRooms = (rooms || []).filter(room => {
+    const matchesSearch = room.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         room.description?.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesCategory = selectedCategory === "all" || room.category === selectedCategory;
+    return matchesSearch && matchesCategory;
+  });
+
+  const filteredBots = (bots || []).filter(bot => {
+    const matchesSearch = bot.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         bot.description?.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesCategory = selectedBotCategory === "all" || bot.category === selectedBotCategory;
+    return matchesSearch && matchesCategory;
+  });
+
+  const handleJoinRoom = async (room: any) => {
+    if (!currentUser) return;
+
+    try {
+      const existingMembership = await RoomMember.filter({ 
+        roomId: room.id, 
+        userId: currentUser.id 
+      });
+
+      if (existingMembership.length > 0) {
+        router.push(createPageUrl('Room', { id: room.id }));
+        return;
+      }
+
+      await RoomMember.create({
+        roomId: room.id,
+        userId: currentUser.id,
+        userName: `${currentUser.firstName || ''} ${currentUser.lastName || ''}`.trim() || currentUser.email,
+        role: "member",
+        joinedAt: new Date().toISOString()
+      });
+
+      await Room.update(room.id, {
+        memberCount: (room.memberCount || 0) + 1
+      });
+
+      await ActivityLog.create({
+        userId: currentUser.id,
+        actionType: "joinRoom",
+        description: `Joined room: "${room.name}"`,
+        ipAddress: "127.0.0.1",
+        userAgent: "WebApp (Simulated)",
+        location: "Simulated Location"
+      });
+
+      toast({
+        title: "Success",
+        description: `Joined ${room.name}`,
+      });
+
+      router.push(createPageUrl('Room', { id: room.id }));
+    } catch (error) {
+      console.error('Error joining room:', error);
+      toast({
+        title: "Error",
+        description: "Failed to join room",
+        variant: "destructive"
+      });
+    }
+  };
+
+  if (!isLoggedIn) return null;
+
+  return (
+    <div className="container mx-auto px-4 py-8 pb-24 md:pb-8">
+      <div className="max-w-6xl mx-auto">
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold mb-2">Explore</h1>
+          <p className="text-neutral-400">Discover and join public chat rooms</p>
+          <p className="text-neutral-400">Discover public rooms and community bots</p>
+        </div>
+
+        <div className="flex flex-col sm:flex-row gap-3 mb-6">
+          <Tabs defaultValue="rooms" className="w-full">
+            <TabsList className="grid w-full grid-cols-2 bg-neutral-900 border border-neutral-800 mb-6">
+              <TabsTrigger value="rooms">Rooms</TabsTrigger>
+              <TabsTrigger value="bots">
+                <BotIcon className="h-4 w-4 mr-2" />
+                Bots
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="rooms" className="space-y-6">
+              <div className="flex flex-col sm:flex-row gap-3 items-end">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-neutral-500 h-4 w-4" />
+                  <Input
+                    placeholder="Search rooms..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-10 bg-neutral-900 border-neutral-800 text-neutral-50 placeholder:text-neutral-500"
+                  />
+                </div>
+                <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+                  <SelectTrigger className="w-full sm:w-48 bg-neutral-900 border-neutral-800 text-neutral-50">
+                    <Filter className="h-4 w-4 mr-2" />
+                    <SelectValue placeholder="Category" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-neutral-900 border-neutral-800">
+                    {CATEGORIES.map(cat => (
+                      <SelectItem key={cat.value} value={cat.value} className="text-neutral-50">
+                        {cat.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {loading ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {[...Array(6)].map((_, i) => (
+                    <div key={i} className="h-48 bg-neutral-900 rounded-lg animate-pulse border border-neutral-800"></div>
+                  ))}
+                </div>
+              ) : filteredRooms.length === 0 ? (
+                <div className="text-center py-16 border border-neutral-800 rounded-lg bg-neutral-900/50">
+                  <Search className="h-12 w-12 text-neutral-600 mx-auto mb-4" />
+                  <h3 className="text-xl font-semibold mb-2">No rooms found</h3>
+                  <p className="text-neutral-400">Try adjusting your search or filters</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {filteredRooms.map((room) => (
+                    <RoomCard 
+                      key={room.id} 
+                      room={room} 
+                      onClick={() => handleJoinRoom(room)}
+                      isJoined={myRoomIds.includes(room.id)}
+                    />
+                  ))}
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent value="bots" className="space-y-6">
+              <div className="flex flex-col sm:flex-row gap-3 items-end">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-neutral-500 h-4 w-4" />
+                  <Input
+                    placeholder="Search bots..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-10 bg-neutral-900 border-neutral-800 text-neutral-50 placeholder:text-neutral-500"
+                  />
+                </div>
+                <Select value={selectedBotCategory} onValueChange={setSelectedBotCategory}>
+                  <SelectTrigger className="w-full sm:w-48 bg-neutral-900 border-neutral-800 text-neutral-50">
+                    <Filter className="h-4 w-4 mr-2" />
+                    <SelectValue placeholder="Category" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-neutral-900 border-neutral-800">
+                    {BOT_CATEGORIES.map(cat => (
+                      <SelectItem key={cat.value} value={cat.value} className="text-neutral-50">
+                        {cat.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <CreateBotDialog botType="community" onSuccess={loadData} />
+              </div>
+
+              {loading ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {[...Array(6)].map((_, i) => (
+                    <div key={i} className="h-56 bg-neutral-900 rounded-lg animate-pulse border border-neutral-800"></div>
+                  ))}
+                </div>
+              ) : filteredBots.length === 0 ? (
+                <div className="text-center py-16 border border-neutral-800 rounded-lg bg-neutral-900/50">
+                  <BotIcon className="h-12 w-12 text-neutral-600 mx-auto mb-4" />
+                  <h3 className="text-xl font-semibold mb-2">No bots found</h3>
+                  <p className="text-neutral-400">Be the first to create a community bot!</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {filteredBots.map((bot) => (
+                    <BotCard 
+                      key={bot.id} 
+                      bot={bot} 
+                      currentUser={currentUser}
+                    />
+                  ))}
+                </div>
+              )}
+            </TabsContent>
+          </Tabs>
+        </div>
+      </div>
+    </div>
+  );
+}
