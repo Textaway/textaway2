@@ -1,0 +1,956 @@
+"use client";
+
+import React, { useState, useEffect } from "react";
+import { User } from "@/entities/User";
+import { Room } from "@/entities/Room";
+import { RoomMember } from "@/entities/RoomMember";
+import { Bot } from "@/entities/Bot";
+import { BotInstance } from "@/entities/BotInstance";
+import { useToast } from "@/components/ui/use-toast";
+import useAppLevelAuth from "@/hooks/useAppLevelAuth";
+import { useRouter } from "next/navigation";
+import { createPageUrl } from "@/utils";
+import { Shield, Users, Server, Crown, AlertTriangle, Ban, UserX, CheckCircle, ArrowLeft, Trash2, Terminal, Command, Bot as BotIcon, Settings, Plus, Sparkles, Zap, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Message } from "@/entities/Message";
+import { Ban as BanEntity } from "@/entities/Ban";
+import { Mute } from "@/entities/Mute";
+import UserDetailsDialog from "../components/admin/UserDetailsDialog";
+import CreateBotDialog from "../components/bots/CreateBotDialog";
+
+export default function AdminPanel() {
+  const { isLoggedIn } = useAppLevelAuth();
+  const { toast } = useToast();
+  const router = useRouter();
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [users, setUsers] = useState<any[]>([]);
+  const [rooms, setRooms] = useState<any[]>([]);
+  const [bots, setBots] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [warningMessage, setWarningMessage] = useState("");
+  const [selectedUser, setSelectedUser] = useState<any>(null);
+  const [editingBot, setEditingBot] = useState<any>(null);
+  const [editBotName, setEditBotName] = useState("");
+
+  const COMMANDS_LIST = [
+    { cmd: '/help', desc: 'Shows list of commands', role: 'Everyone' },
+    { cmd: '/nick <name>', desc: 'Change your nickname', role: 'Everyone' },
+    { cmd: '/me <action>', desc: 'Perform an action message', role: 'Everyone' },
+    { cmd: '/shrug', desc: 'Send ¯\\_(ツ)_/¯', role: 'Everyone' },
+    { cmd: '/tableflip', desc: 'Send (╯°□°)╯︵ ┻━┻', role: 'Everyone' },
+    { cmd: '/unflip', desc: 'Send ┬─┬ノ( º _ ºノ)', role: 'Everyone' },
+    { cmd: '/lenny', desc: 'Send ( ͡° ͜ʖ ͡°)', role: 'Everyone' },
+    { cmd: '/roll [sides]', desc: 'Roll a dice', role: 'Everyone' },
+    { cmd: '/flip', desc: 'Flip a coin', role: 'Everyone' },
+    { cmd: '/8ball <question>', desc: 'Ask the magic 8-ball', role: 'Everyone' },
+    { cmd: '/afk [message]', desc: 'Mark as away', role: 'Everyone' },
+    { cmd: '/back', desc: 'Mark as back', role: 'Everyone' },
+    { cmd: '/whisper <user> <msg>', desc: 'Send private message', role: 'Everyone' },
+    { cmd: '/time', desc: 'Show current time', role: 'Everyone' },
+    { cmd: '/quote', desc: 'Get inspirational quote', role: 'Everyone' },
+    { cmd: '/fact', desc: 'Get random fact', role: 'Everyone' },
+    { cmd: '/joke', desc: 'Get random joke', role: 'Everyone' },
+    { cmd: '/choose <opt1, opt2>', desc: 'Choose between options', role: 'Everyone' },
+    { cmd: '/reverse <text>', desc: 'Reverse text', role: 'Everyone' },
+    { cmd: '/count <text>', desc: 'Count characters/words', role: 'Everyone' },
+    { cmd: '/math <expression>', desc: 'Calculate math', role: 'Everyone' },
+    { cmd: '/kick <user> [time] [reason]', desc: 'Kick a user temporarily', role: 'Moderator+' },
+    { cmd: '/mute <user> [time] [reason]', desc: 'Mute a user', role: 'Moderator+' },
+    { cmd: '/unmute <user>', desc: 'Unmute a user', role: 'Moderator+' },
+    { cmd: '/warn <user> [reason]', desc: 'Warn a user', role: 'Moderator+' },
+    { cmd: '/clear', desc: 'Clear chat history', role: 'Moderator+' },
+    { cmd: '/lock', desc: 'Lock room', role: 'Moderator+' },
+    { cmd: '/unlock', desc: 'Unlock room', role: 'Moderator+' },
+    { cmd: '/say <message>', desc: 'Send as system', role: 'Moderator+' },
+    { cmd: '/embed <title> <desc>', desc: 'Send embed message', role: 'Moderator+' },
+    { cmd: '/ban <user> [reason]', desc: 'Ban a user', role: 'Admin+' },
+    { cmd: '/unban <user>', desc: 'Unban a user', role: 'Admin+' },
+    { cmd: '/promote <user>', desc: 'Promote to Moderator', role: 'Admin+' },
+    { cmd: '/demote <user>', desc: 'Demote to Member', role: 'Admin+' },
+    { cmd: '/slowmode <seconds>', desc: 'Set chat slow mode', role: 'Admin+' },
+    { cmd: '/setpowerlevel <user> <lvl>', desc: 'Set custom power level', role: 'Admin+' },
+    { cmd: '/announce <message>', desc: 'Send room announcement', role: 'Admin+' },
+    { cmd: '/op <user>', desc: 'Promote to Admin', role: 'Owner' },
+    { cmd: '/deop <user>', desc: 'Demote Admin', role: 'Owner' },
+    { cmd: '/manager <user>', desc: 'Promote to Manager', role: 'Owner' },
+    { cmd: '/transfer <user>', desc: 'Transfer ownership', role: 'Owner' },
+    { cmd: '/impersonate <user>', desc: 'Send as another user', role: 'Owner' },
+    { cmd: '/unimpersonate', desc: 'Stop impersonating', role: 'Owner' },
+    { cmd: '/testaccount <user>', desc: 'Toggle test account status', role: 'App Admin' },
+    { cmd: '/transferdata <from> <to>', desc: 'Transfer account data', role: 'App Admin' },
+    { cmd: '/carl help', desc: 'Show Carl Bot commands', role: 'Everyone' },
+    { cmd: '/carl stats', desc: 'View server stats', role: 'Everyone' },
+    { cmd: '/serverinfo', desc: 'Show server info', role: 'Everyone' },
+    { cmd: '/membercount', desc: 'Show member count', role: 'Everyone' },
+    { cmd: '/userinfo <user>', desc: 'Show user info', role: 'Everyone' },
+    { cmd: '/roles', desc: 'List server roles', role: 'Everyone' },
+    { cmd: '/avatar <user>', desc: 'Show user avatar', role: 'Everyone' },
+    { cmd: '/uptime', desc: 'Show server uptime', role: 'Everyone' },
+    { cmd: '/ping', desc: 'Check bot latency', role: 'Everyone' },
+    { cmd: '/remind <time> <msg>', desc: 'Set reminder', role: 'Everyone' },
+    { cmd: '/weather <location>', desc: 'Check weather', role: 'Everyone' },
+    { cmd: '/translate <text>', desc: 'Translate text', role: 'Everyone' },
+    { cmd: '/rank', desc: 'Show your rank', role: 'Everyone' },
+    { cmd: '/level', desc: 'Show your level', role: 'Everyone' },
+  ];
+
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    loadData();
+  }, [isLoggedIn]);
+
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const user = await User.me();
+      setCurrentUser(user);
+
+      if (user.role !== 'admin') {
+        toast({
+          title: "Access Denied",
+          description: "Only administrators can access this panel",
+          variant: "destructive"
+        });
+        router.push(createPageUrl('Home'));
+        return;
+      }
+
+      const allUsers = await User.list();
+      setUsers(allUsers || []);
+
+      const allRooms = await Room.list();
+      setRooms(allRooms || []);
+      
+      const allBots = await Bot.list();
+      setBots(allBots || []);
+    } catch (error: any) {
+      // If user not found, logout
+      if (error?.response?.status === 404 || error?.message?.includes('not found') || error?.message?.includes('404')) {
+        console.warn("User not found in Admin, logging out...");
+        router.push(createPageUrl("login"));
+        return;
+      }
+      console.error('Error loading admin data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeactivateUser = async (userId: string, currentStatus: boolean) => {
+    try {
+      await User.update(userId, { isDeactivated: !currentStatus });
+      toast({
+        title: "Success",
+        description: `User ${!currentStatus ? 'deactivated' : 'reactivated'} successfully`
+      });
+      loadData();
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to update user status",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleSuspendUser = async (userId: string, currentStatus: boolean) => {
+    try {
+      await User.update(userId, { isSuspended: !currentStatus, role: !currentStatus ? 'banned' : 'user' });
+      toast({
+        title: "Success",
+        description: `User ${!currentStatus ? 'suspended' : 'unsuspended'} successfully`
+      });
+      loadData();
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to suspend user",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleWarnUser = async (userId: string) => {
+    if (!warningMessage.trim()) {
+      toast({
+        title: "Error",
+        description: "Please enter a warning message",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    try {
+      const user = await User.get(userId);
+      const warnings = user.warnings || [];
+      warnings.push({
+        message: warningMessage,
+        issuedBy: currentUser.email,
+        issuedAt: new Date().toISOString(),
+        acknowledged: false
+      });
+
+      await User.update(userId, { warnings });
+      toast({
+        title: "Success",
+        description: "Warning issued successfully"
+      });
+      setWarningMessage("");
+      setSelectedUser(null);
+      loadData();
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to issue warning",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleToggleAirPlus = async (userId: string, currentStatus: boolean) => {
+    try {
+      await User.update(userId, { hasAirPlus: !currentStatus });
+      toast({
+        title: "Success",
+        description: `AIR+ ${!currentStatus ? 'granted' : 'revoked'} successfully`
+      });
+      loadData();
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to update AIR+ status",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleVerifyRoom = async (roomId: string, currentStatus: boolean) => {
+    try {
+      await Room.update(roomId, { isVerified: !currentStatus });
+      toast({
+        title: "Success",
+        description: `Room ${!currentStatus ? 'verified' : 'unverified'} successfully`
+      });
+      loadData();
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to verify room",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleDeleteRoom = async (roomId: string) => {
+    try {
+      // Delete related data first (best effort)
+      const members = await RoomMember.filter({ roomId });
+      for (const m of members) await RoomMember.delete(m.id);
+
+      const messages = await Message.filter({ roomId });
+      for (const m of messages) await Message.delete(m.id);
+
+      const bans = await BanEntity.filter({ roomId });
+      for (const b of bans) await BanEntity.delete(b.id);
+
+      const mutes = await Mute.filter({ roomId });
+      for (const m of mutes) await Mute.delete(m.id);
+
+      // Finally delete the room
+      await Room.delete(roomId);
+      
+      toast({
+        title: "Success",
+        description: "Room deleted successfully"
+      });
+      loadData();
+    } catch (error) {
+      console.error("Error deleting room:", error);
+      toast({
+        title: "Error",
+        description: "Failed to delete room",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleVerifyBot = async (botId: string, currentStatus: boolean) => {
+    try {
+      await Bot.update(botId, { isVerified: !currentStatus });
+      toast({
+        title: "Success",
+        description: `Bot ${!currentStatus ? 'verified' : 'unverified'} successfully`
+      });
+      loadData();
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to verify bot",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleDeleteBot = async (botId: string) => {
+    try {
+      const instances = await BotInstance.filter({ botId });
+      for (const instance of instances) {
+        await BotInstance.delete(instance.id);
+      }
+      await Bot.delete(botId);
+      toast({
+        title: "Success",
+        description: "Bot deleted successfully"
+      });
+      loadData();
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to delete bot",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleGiveUserBoosts = async (userId: string, count: number) => {
+    try {
+      const user = await User.get(userId);
+      await User.update(userId, {
+        boostCount: (user.boostCount || 0) + count
+      });
+      toast({
+        title: "Success",
+        description: `Gave ${count} boost(s) to user`
+      });
+      loadData();
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to give boosts",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleEditBot = async (botId: string) => {
+    if (!editBotName.trim()) return;
+    try {
+      await Bot.update(botId, { name: editBotName });
+      toast({ title: "Success", description: "Bot name updated" });
+      setEditingBot(null);
+      loadData();
+    } catch (error) {
+      toast({ title: "Error", description: "Failed to update bot", variant: "destructive" });
+    }
+  };
+
+  const handleRemoveBotFromServers = async (botId: string) => {
+    try {
+      const instances = await BotInstance.filter({ botId });
+      for (const instance of instances) {
+        await BotInstance.delete(instance.id);
+      }
+      toast({ title: "Success", description: `Removed bot from ${instances.length} servers` });
+      loadData();
+    } catch (error) {
+      toast({ title: "Error", description: "Failed to remove bot instances", variant: "destructive" });
+    }
+  };
+
+  if (!isLoggedIn || loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[calc(100vh-4rem)]">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-neutral-50"></div>
+      </div>
+    );
+  }
+
+  if (currentUser?.role !== 'admin') {
+    return null;
+  }
+
+  const filteredUsers = users.filter(user => 
+    user.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    user.firstName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    user.lastName?.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const filteredRooms = rooms.filter(room =>
+    room.name?.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const filteredBots = bots.filter(bot =>
+    bot.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    bot.description?.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const carlBot = bots.find(b => b.name === "Carl Bot");
+
+  return (
+    <div className="container mx-auto px-4 py-8 pb-24 md:pb-8">
+      <div className="max-w-7xl mx-auto">
+        <div className="mb-8">
+          <Button
+            variant="ghost"
+            onClick={() => router.back()}
+            className="mb-4 text-neutral-400 hover:text-neutral-50"
+          >
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back
+          </Button>
+          <div className="flex items-center gap-3 mb-2">
+            <Shield className="h-8 w-8 text-blue-500" />
+            <h1 className="text-3xl font-bold">Admin Panel</h1>
+          </div>
+          <p className="text-neutral-400">Manage users, rooms, and platform settings</p>
+        </div>
+
+        <Tabs defaultValue="users" className="w-full">
+          <TabsList className="grid w-full grid-cols-5 bg-neutral-900 border border-neutral-800 mb-6">
+            <TabsTrigger value="users">
+              <Users className="h-4 w-4 mr-2" />
+              Users
+            </TabsTrigger>
+            <TabsTrigger value="rooms">
+              <Server className="h-4 w-4 mr-2" />
+              Rooms
+            </TabsTrigger>
+            <TabsTrigger value="bots">
+              <BotIcon className="h-4 w-4 mr-2" />
+              Bots
+            </TabsTrigger>
+            <TabsTrigger value="carl">
+              <Settings className="h-4 w-4 mr-2" />
+              Carl Bot
+            </TabsTrigger>
+            <TabsTrigger value="commands">
+              <Terminal className="h-4 w-4 mr-2" />
+              Commands
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="users">
+            <Card className="bg-neutral-900 border-neutral-800">
+              <CardHeader>
+                <CardTitle>User Management</CardTitle>
+                <div className="mt-4">
+                  <Input
+                    placeholder="Search users..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="bg-neutral-950 border-neutral-800"
+                  />
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="border-neutral-800">
+                        <TableHead>User</TableHead>
+                        <TableHead>Email</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Warnings</TableHead>
+                        <TableHead>Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredUsers.map((user) => (
+                        <TableRow key={user.id} className="border-neutral-800">
+                          <TableCell>
+                            <UserDetailsDialog userId={user.id} trigger={
+                              <button className="flex items-center gap-2 hover:underline">
+                                <span className="font-medium">
+                                  {user.firstName || user.lastName ? `${user.firstName || ''} ${user.lastName || ''}`.trim() : 'Unknown'}
+                                </span>
+                                {user.hasAirPlus && (
+                                  <Badge className="bg-gradient-to-r from-purple-500 to-pink-500 text-white border-0">
+                                    <Crown className="h-3 w-3 mr-1" />
+                                    AIR+
+                                  </Badge>
+                                )}
+                              </button>
+                            } />
+                          </TableCell>
+                          <TableCell className="text-neutral-400">{user.email}</TableCell>
+                          <TableCell>
+                            <div className="flex flex-col gap-1">
+                              {user.isSuspended && (
+                                <Badge variant="destructive">Suspended</Badge>
+                              )}
+                              {user.isDeactivated && (
+                                <Badge className="bg-orange-900 text-orange-100">Deactivated</Badge>
+                              )}
+                              {!user.isSuspended && !user.isDeactivated && (
+                                <Badge className="bg-green-900 text-green-100">Active</Badge>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <span className="text-neutral-400">{user.warnings?.length || 0}</span>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleDeactivateUser(user.id, user.isDeactivated)}
+                                className="border-neutral-800"
+                              >
+                                <UserX className="h-4 w-4 mr-1" />
+                                {user.isDeactivated ? 'Reactivate' : 'Deactivate'}
+                              </Button>
+                              
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button
+                                    size="sm"
+                                    variant="destructive"
+                                  >
+                                    <Ban className="h-4 w-4 mr-1" />
+                                    {user.isSuspended ? 'Unsuspend' : 'Suspend'}
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent className="bg-neutral-900 border-neutral-800">
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>
+                                      {user.isSuspended ? 'Unsuspend User?' : 'Suspend User?'}
+                                    </AlertDialogTitle>
+                                    <AlertDialogDescription className="text-neutral-400">
+                                      {user.isSuspended 
+                                        ? 'This will restore the user\'s access to the platform.'
+                                        : 'This will permanently ban the user from the platform. They will not be able to access any rooms or features.'}
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel className="bg-neutral-800 text-neutral-50 hover:bg-neutral-700 border-neutral-700">
+                                      Cancel
+                                    </AlertDialogCancel>
+                                    <AlertDialogAction
+                                      onClick={() => handleSuspendUser(user.id, user.isSuspended)}
+                                      className="bg-red-600 text-white hover:bg-red-700"
+                                    >
+                                      Confirm
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => setSelectedUser(user)}
+                                    className="border-neutral-800"
+                                  >
+                                    <AlertTriangle className="h-4 w-4 mr-1" />
+                                    Warn
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent className="bg-neutral-900 border-neutral-800">
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Issue Warning</AlertDialogTitle>
+                                    <AlertDialogDescription className="text-neutral-400">
+                                      Send a warning to {user.email}. They will see this message when they next access the app.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <div className="py-4">
+                                    <Label htmlFor="warning">Warning Message</Label>
+                                    <Textarea
+                                      id="warning"
+                                      value={warningMessage}
+                                      onChange={(e) => setWarningMessage(e.target.value)}
+                                      placeholder="Enter warning message..."
+                                      className="bg-neutral-950 border-neutral-800 mt-2"
+                                      rows={4}
+                                    />
+                                  </div>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel 
+                                      className="bg-neutral-800 text-neutral-50 hover:bg-neutral-700 border-neutral-700"
+                                      onClick={() => {
+                                        setWarningMessage("");
+                                        setSelectedUser(null);
+                                      }}
+                                    >
+                                      Cancel
+                                    </AlertDialogCancel>
+                                    <AlertDialogAction
+                                      onClick={() => selectedUser && handleWarnUser(selectedUser.id)}
+                                      className="bg-orange-600 text-white hover:bg-orange-700"
+                                    >
+                                      Issue Warning
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+
+                              <Button
+                                size="sm"
+                                variant={user.hasAirPlus ? "secondary" : "outline"}
+                                onClick={() => handleToggleAirPlus(user.id, user.hasAirPlus)}
+                                className={user.hasAirPlus ? "bg-gradient-to-r from-purple-600 to-pink-600 text-white border-0" : "border-neutral-800"}
+                              >
+                                <Crown className="h-4 w-4 mr-1" />
+                                {user.hasAirPlus ? 'Revoke AIR+' : 'Grant AIR+'}
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="rooms">
+            <Card className="bg-neutral-900 border-neutral-800">
+              <CardHeader>
+                <CardTitle>Room Management</CardTitle>
+                <div className="mt-4">
+                  <Input
+                    placeholder="Search rooms..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="bg-neutral-950 border-neutral-800"
+                  />
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="border-neutral-800">
+                        <TableHead>Room Name</TableHead>
+                        <TableHead>Category</TableHead>
+                        <TableHead>Members</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredRooms.map((room) => (
+                        <TableRow key={room.id} className="border-neutral-800">
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">{room.name}</span>
+                              {room.isVerified && (
+                                <CheckCircle className="h-4 w-4 text-blue-500" />
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="secondary" className="capitalize">
+                              {room.category}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-neutral-400">{room.memberCount || 0}</TableCell>
+                          <TableCell>
+                            {room.isPublic ? (
+                              <Badge className="bg-green-900 text-green-100">Public</Badge>
+                            ) : (
+                              <Badge className="bg-neutral-700 text-neutral-100">Private</Badge>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                size="sm"
+                                variant={room.isVerified ? "secondary" : "outline"}
+                                onClick={() => handleVerifyRoom(room.id, room.isVerified)}
+                                className={room.isVerified ? "bg-blue-600 text-white" : "border-neutral-800"}
+                              >
+                                <CheckCircle className="h-4 w-4 mr-1" />
+                                {room.isVerified ? 'Unverify' : 'Verify'}
+                              </Button>
+                              
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button
+                                    size="sm"
+                                    variant="destructive"
+                                  >
+                                    <Trash2 className="h-4 w-4 mr-1" />
+                                    Delete
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent className="bg-neutral-900 border-neutral-800">
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Delete Room?</AlertDialogTitle>
+                                    <AlertDialogDescription className="text-neutral-400">
+                                      Are you sure you want to delete "{room.name}"? This action cannot be undone and will remove all messages and member data associated with this room.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel className="bg-neutral-800 text-neutral-50 hover:bg-neutral-700 border-neutral-700">
+                                      Cancel
+                                    </AlertDialogCancel>
+                                    <AlertDialogAction
+                                      onClick={() => handleDeleteRoom(room.id)}
+                                      className="bg-red-600 text-white hover:bg-red-700"
+                                    >
+                                      Delete Room
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="bots">
+            <Card className="bg-neutral-900 border-neutral-800">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle>Bot Management</CardTitle>
+                  <CreateBotDialog botType="personal" onSuccess={loadData} />
+                </div>
+                <div className="mt-4">
+                  <Input
+                    placeholder="Search bots..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="bg-neutral-950 border-neutral-800"
+                  />
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="border-neutral-800">
+                        <TableHead>Bot Name</TableHead>
+                        <TableHead>Trigger</TableHead>
+                        <TableHead>Type</TableHead>
+                        <TableHead>Installs</TableHead>
+                        <TableHead>Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredBots.map((bot) => (
+                        <TableRow key={bot.id} className="border-neutral-800">
+                          <TableCell>
+                            {editingBot?.id === bot.id ? (
+                              <div className="flex gap-2">
+                                <Input 
+                                  value={editBotName} 
+                                  onChange={(e) => setEditBotName(e.target.value)}
+                                  className="h-8 bg-neutral-950 border-neutral-800"
+                                />
+                                <Button size="sm" onClick={() => handleEditBot(bot.id)}><CheckCircle className="h-4 w-4" /></Button>
+                                <Button size="sm" variant="ghost" onClick={() => setEditingBot(null)}><X className="h-4 w-4" /></Button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2">
+                                {bot.iconUrl ? (
+                                  <img src={bot.iconUrl} alt={bot.name} className="w-8 h-8 rounded-full object-cover" />
+                                ) : (
+                                  <BotIcon className="h-5 w-5 text-neutral-500" />
+                                )}
+                                <span className="font-medium">{bot.name}</span>
+                                <Button 
+                                  size="sm" 
+                                  variant="ghost" 
+                                  className="h-6 w-6 p-0 ml-2"
+                                  onClick={() => {
+                                    setEditingBot(bot);
+                                    setEditBotName(bot.name);
+                                  }}
+                                >
+                                  <Settings className="h-3 w-3" />
+                                </Button>
+                              </div>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <code className="text-xs bg-neutral-950 px-2 py-1 rounded font-mono text-blue-400">
+                              {bot.trigger}
+                            </code>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="secondary" className="capitalize">
+                              {bot.botType}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-neutral-400">{bot.installCount || 0}</TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleRemoveBotFromServers(bot.id)}
+                                className="border-neutral-800 text-xs"
+                              >
+                                Remove from Servers
+                              </Button>
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button size="sm" variant="destructive">
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent className="bg-neutral-900 border-neutral-800">
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Delete Bot?</AlertDialogTitle>
+                                    <AlertDialogDescription className="text-neutral-400">
+                                      Are you sure you want to delete "{bot.name}"? This will remove it from all servers.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel className="bg-neutral-800 text-neutral-50 hover:bg-neutral-700 border-neutral-700">
+                                      Cancel
+                                    </AlertDialogCancel>
+                                    <AlertDialogAction
+                                      onClick={() => handleDeleteBot(bot.id)}
+                                      className="bg-red-600 text-white hover:bg-red-700"
+                                    >
+                                      Delete Bot
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="carl">
+            {carlBot ? (
+              <Card className="bg-neutral-900 border-neutral-800">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <BotIcon className="h-5 w-5 text-blue-500" />
+                    Carl Bot Management
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  <div className="flex items-start gap-4">
+                    {carlBot.iconUrl ? (
+                      <img src={carlBot.iconUrl} alt="Carl Bot" className="w-16 h-16 rounded-full object-cover border-2 border-blue-500" />
+                    ) : (
+                      <div className="w-16 h-16 rounded-full bg-blue-950 border-2 border-blue-500 flex items-center justify-center">
+                        <BotIcon className="h-8 w-8 text-blue-500" />
+                      </div>
+                    )}
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-2">
+                        <h3 className="text-xl font-bold">{carlBot.name}</h3>
+                        <CheckCircle className="h-5 w-5 text-blue-500" />
+                        <Badge className="bg-blue-600 text-white">Official</Badge>
+                      </div>
+                      <p className="text-neutral-400 mb-3">{carlBot.description}</p>
+                      <div className="flex items-center gap-4 text-sm">
+                        <div className="flex items-center gap-1">
+                          <Users className="h-4 w-4 text-neutral-500" />
+                          <span className="text-neutral-400">{carlBot.installCount || 0} servers</span>
+                        </div>
+                        <code className="bg-neutral-950 px-2 py-1 rounded font-mono text-blue-400">
+                          {carlBot.trigger}
+                        </code>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-blue-950/50 border border-blue-900 rounded-lg p-4">
+                    <h4 className="font-semibold mb-4 text-sm text-blue-200">Full Command List (50+)</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 text-xs">
+                      {[
+                        '/carl help', '/carl stats', '/carl kick', '/carl ban', '/carl mute', '/carl unmute',
+                        '/carl warn', '/carl warnings', '/carl clearwarnings', '/carl lockdown', '/carl unlock',
+                        '/carl purge', '/carl slowmode', '/carl automod', '/carl welcome', '/carl role add',
+                        '/carl role remove', '/carl roles', '/carl membercount', '/carl serverinfo', '/carl userinfo',
+                        '/carl avatar', '/carl banner', '/carl icon', '/carl channels', '/carl invites',
+                        '/carl bans', '/carl mutes', '/carl audit', '/carl backup', '/carl restore',
+                        '/carl export', '/carl filter add', '/carl filter remove', '/carl filter list',
+                        '/carl autorespond add', '/carl autorespond remove', '/carl autorespond list',
+                        '/carl announce', '/carl embed', '/carl poll', '/carl timer', '/carl giveaway',
+                        '/carl rank', '/carl leaderboard', '/carl levels', '/carl setlevel', '/carl economy',
+                        '/carl shop', '/carl buy', '/carl inventory', '/carl daily', '/carl rep',
+                        '/carl profile', '/carl marry', '/carl divorce', '/carl color', '/carl badge'
+                      ].map(cmd => (
+                        <code key={cmd} className="bg-neutral-950 px-2 py-1 rounded text-blue-400 block truncate">
+                          {cmd}
+                        </code>
+                      ))}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : (
+              <Card className="bg-neutral-900 border-neutral-800">
+                <CardContent className="p-8 text-center">
+                  <BotIcon className="h-12 w-12 text-neutral-600 mx-auto mb-4" />
+                  <h3 className="text-xl font-semibold mb-2">Carl Bot Not Found</h3>
+                  <p className="text-neutral-400 mb-4">The Carl moderation bot needs to be created.</p>
+                </CardContent>
+              </Card>
+            )}
+          </TabsContent>
+
+          <TabsContent value="commands">
+            <Card className="bg-neutral-900 border-neutral-800">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Command className="h-5 w-5" />
+                  Command Dashboard
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {COMMANDS_LIST.map((cmd, index) => (
+                    <div key={index} className="p-4 rounded-lg bg-neutral-950 border border-neutral-800">
+                      <div className="flex justify-between items-start mb-2">
+                        <code className="text-sm font-mono bg-neutral-900 px-2 py-1 rounded text-blue-400">
+                          {cmd.cmd}
+                        </code>
+                        <Badge variant="outline" className="text-xs border-neutral-700 text-neutral-400">
+                          {cmd.role}
+                        </Badge>
+                      </div>
+                      <p className="text-sm text-neutral-400">{cmd.desc}</p>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
+      </div>
+    </div>
+  );
+}
