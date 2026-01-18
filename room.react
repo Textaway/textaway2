@@ -1,0 +1,1255 @@
+"use client";
+
+import React, { useState, useEffect, useRef } from "react";
+import { Room } from "@/entities/Room";
+import { RoomMember } from "@/entities/RoomMember";
+import { Message } from "@/entities/Message";
+import { Dem } from "@/entities/Dem";
+import { Ban } from "@/entities/Ban";
+import { User } from "@/entities/User";
+import { ActivityLog } from "@/entities/ActivityLog";
+import { Mute } from "@/entities/Mute";
+import { BotInstance } from "@/entities/BotInstance";
+import { Bot } from "@/entities/Bot";
+import { useSearchParams, useRouter } from "next/navigation";
+import { createPageUrl } from "@/utils";
+import { format } from "date-fns";
+import { useToast } from "@/components/ui/use-toast";
+import useAppLevelAuth from "@/hooks/useAppLevelAuth";
+import { Send, Users, Settings, Flame, ArrowLeft, Phone, Video, CheckCircle, Crown, Sparkles } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import MessageItem from "../components/chat/MessageItem";
+import RoomSettings from "../components/rooms/RoomSettings";
+import MembersList from "../components/rooms/MembersList";
+import CallInterface from "../components/calls/CallInterface";
+import ServerBoostDialog from "../components/rooms/ServerBoostDialog";
+
+export default function RoomPage() {
+  const { isLoggedIn } = useAppLevelAuth();
+  const { toast } = useToast();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const roomId = searchParams?.get('id');
+
+  const [room, setRoom] = useState<any>(null);
+  const [messages, setMessages] = useState<any[]>([]);
+  const [members, setMembers] = useState<any[]>([]);
+  const [bots, setBots] = useState<any[]>([]);
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [currentMember, setCurrentMember] = useState<any>(null);
+  const [messageInput, setMessageInput] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showMembers, setShowMembers] = useState(false);
+  const [lastMessageTime, setLastMessageTime] = useState(0);
+  const [inCall, setInCall] = useState(false);
+  const [callType, setCallType] = useState<"voice" | "video">("voice");
+  const [impersonatingUser, setImpersonatingUser] = useState<any>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [isLeavingRoom, setIsLeavingRoom] = useState(false);
+
+  const COMMANDS_LIST = [
+    { cmd: '/help', desc: 'Shows list of commands', role: 'Everyone' },
+    { cmd: '/nick <name>', desc: 'Change your nickname', role: 'Everyone' },
+    { cmd: '/me <action>', desc: 'Perform an action message', role: 'Everyone' },
+    { cmd: '/shrug', desc: 'Send ¯\\_(ツ)_/¯', role: 'Everyone' },
+    { cmd: '/tableflip', desc: 'Send (╯°□°)╯︵ ┻━┻', role: 'Everyone' },
+    { cmd: '/unflip', desc: 'Send ┬─┬ノ( º _ ºノ)', role: 'Everyone' },
+    { cmd: '/lenny', desc: 'Send ( ͡° ͜ʖ ͡°)', role: 'Everyone' },
+    { cmd: '/roll [sides]', desc: 'Roll a dice', role: 'Everyone' },
+    { cmd: '/flip', desc: 'Flip a coin', role: 'Everyone' },
+    { cmd: '/8ball <question>', desc: 'Ask the magic 8-ball', role: 'Everyone' },
+    { cmd: '/afk [message]', desc: 'Mark as away', role: 'Everyone' },
+    { cmd: '/back', desc: 'Mark as back', role: 'Everyone' },
+    { cmd: '/whisper <user> <msg>', desc: 'Send private message', role: 'Everyone' },
+    { cmd: '/kick <user> [time] [reason]', desc: 'Kick a user temporarily', role: 'Moderator+' },
+    { cmd: '/mute <user> [time] [reason]', desc: 'Mute a user', role: 'Moderator+' },
+    { cmd: '/unmute <user>', desc: 'Unmute a user', role: 'Moderator+' },
+    { cmd: '/warn <user> [reason]', desc: 'Warn a user', role: 'Moderator+' },
+    { cmd: '/clear', desc: 'Clear chat history', role: 'Moderator+' },
+    { cmd: '/lock', desc: 'Lock room', role: 'Moderator+' },
+    { cmd: '/unlock', desc: 'Unlock room', role: 'Moderator+' },
+    { cmd: '/ban <user> [reason]', desc: 'Ban a user', role: 'Admin+' },
+    { cmd: '/unban <user>', desc: 'Unban a user', role: 'Admin+' },
+    { cmd: '/promote <user>', desc: 'Promote to Moderator', role: 'Admin+' },
+    { cmd: '/demote <user>', desc: 'Demote to Member', role: 'Admin+' },
+    { cmd: '/slowmode <seconds>', desc: 'Set chat slow mode', role: 'Admin+' },
+    { cmd: '/setpowerlevel <user> <lvl>', desc: 'Set custom power level', role: 'Admin+' },
+    { cmd: '/announce <message>', desc: 'Send room announcement', role: 'Admin+' },
+    { cmd: '/op <user>', desc: 'Promote to Admin', role: 'Owner' },
+    { cmd: '/deop <user>', desc: 'Demote Admin', role: 'Owner' },
+    { cmd: '/manager <user>', desc: 'Promote to Manager', role: 'Owner' },
+    { cmd: '/transfer <user>', desc: 'Transfer ownership', role: 'Owner' },
+    { cmd: '/impersonate <user>', desc: 'Send as another user', role: 'Owner' },
+    { cmd: '/testaccount <user>', desc: 'Toggle test account status', role: 'App Admin' },
+  ];
+
+  useEffect(() => {
+    if (!isLoggedIn || !roomId) return;
+    loadRoomData();
+    const interval = setInterval(loadMessages, 3000);
+    return () => clearInterval(interval);
+  }, [isLoggedIn, roomId]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const loadRoomData = async () => {
+    try {
+      setLoading(true);
+      const user = await User.me();
+      setCurrentUser(user);
+
+      const roomData = await Room.get(roomId!);
+      setRoom(roomData);
+
+      if (user.isDeactivated) {
+        toast({
+          title: "Account Deactivated",
+          description: "Your account has been deactivated. You can view messages but cannot send them.",
+          variant: "destructive"
+        });
+      }
+
+      if (user.isSuspended) {
+        toast({
+          title: "Account Suspended",
+          description: "Your account has been suspended.",
+          variant: "destructive"
+        });
+        router.push(createPageUrl('Home'));
+        return;
+      }
+
+      const bans = await Ban.filter({ roomId: roomId!, userId: user.id });
+      if (bans.length > 0) {
+        toast({
+          title: "Access Denied",
+          description: "You have been banned from this room",
+          variant: "destructive"
+        });
+        router.push(createPageUrl('Home'));
+        return;
+      }
+
+      const membersList = await RoomMember.filter({ roomId: roomId! });
+      setMembers(membersList || []);
+
+      const botsList = await BotInstance.filter({ roomId: roomId! });
+      // Fetch full bot details for icons/etc
+      const fullBots = await Promise.all(botsList.map(async (instance) => {
+        try {
+          const botDef = await Bot.get(instance.botId);
+          return { ...botDef, instanceId: instance.id, ...instance }; // Merge instance config over bot def if needed
+        } catch (e) {
+          return instance;
+        }
+      }));
+      setBots(fullBots || []);
+
+      const userMembership = (membersList || []).find(m => m.userId === user.id);
+      setCurrentMember(userMembership);
+
+      await loadMessages();
+    } catch (error: any) {
+      // If user not found, logout
+      if (error?.response?.status === 404 || error?.message?.includes('not found') || error?.message?.includes('404')) {
+        console.warn("User not found in Room, logging out...");
+        router.push(createPageUrl("login"));
+        return;
+      }
+      console.error('Error loading room:', error);
+      
+      toast({
+        title: "Error",
+        description: "Failed to load room",
+        variant: "destructive"
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadMessages = async () => {
+    try {
+      const msgs = await Message.filter({ roomId: roomId! }, "createdAt:asc", 100);
+      setMessages(msgs || []);
+    } catch (error) {
+      console.error('Error loading messages:', error);
+    }
+  };
+
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!messageInput.trim()) return;
+
+    // Persist user command message first
+    if (messageInput.startsWith('/')) {
+      try {
+        const commandMsg = await Message.create({
+          roomId: roomId!,
+          userId: currentUser.id,
+          userName: currentMember?.userName || currentUser.firstName || 'User',
+          content: messageInput,
+          isDem: false,
+          demCount: 0,
+          userHasAirPlus: currentUser.hasAirPlus || false
+        });
+        setMessages(prev => [...prev, commandMsg]);
+        
+        const [command, ...args] = messageInput.slice(1).split(' ');
+        await handleCommand(command.toLowerCase(), args);
+        setMessageInput("");
+        return;
+      } catch (error) {
+        console.error("Failed to send command message", error);
+      }
+    }
+
+    if (!currentUser || !currentMember) return;
+
+    if (currentUser.isDeactivated) {
+      toast({
+        title: "Account Deactivated",
+        description: "Your account has been deactivated. You cannot send messages.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    const mutes = await Mute.filter({ roomId: roomId!, userId: currentUser.id });
+    if (mutes.length > 0) {
+      const mute = mutes[0];
+      const expiry = new Date(mute.expiresAt);
+      if (expiry > new Date()) {
+        toast({
+          title: "You are muted",
+          description: `You cannot send messages for another ${Math.ceil((expiry.getTime() - new Date().getTime()) / 60000)} minutes. Reason: ${mute.reason}`,
+          variant: "destructive"
+        });
+        return;
+      } else {
+        await Mute.delete(mute.id);
+      }
+    }
+
+    const whoCanTalk = room.settings?.whoCanTalk || "everyone";
+    const roleLevel = getRoleLevel(currentMember.role);
+
+    if (whoCanTalk === "moderators" && roleLevel < 2) {
+      toast({
+        title: "Permission Denied",
+        description: "Only moderators and above can send messages",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    if (whoCanTalk === "admins" && roleLevel < 3) {
+      toast({
+        title: "Permission Denied",
+        description: "Only admins and above can send messages",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    if (whoCanTalk === "owner" && roleLevel < 4) {
+      toast({
+        title: "Permission Denied",
+        description: "Only the owner can send messages",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    const slowMode = room.settings?.slowMode || 0;
+    if (slowMode > 0) {
+      const now = Date.now();
+      const timeSinceLastMessage = (now - lastMessageTime) / 1000;
+      if (timeSinceLastMessage < slowMode) {
+        const remaining = Math.ceil(slowMode - timeSinceLastMessage);
+        toast({
+          title: "Slow Mode Active",
+          description: `Please wait ${remaining} seconds before sending another message`,
+          variant: "destructive"
+        });
+        return;
+      }
+    }
+
+    try {
+      const messageData: any = {
+        roomId: roomId!,
+        userId: currentUser.id,
+        userName: currentMember.userName,
+        content: messageInput,
+        isDem: false,
+        demCount: 0,
+        userHasAirPlus: currentUser.hasAirPlus || false
+      };
+
+      if (impersonatingUser) {
+        messageData.userName = impersonatingUser.userName;
+        messageData.impersonatedBy = {
+          userId: currentUser.id,
+          userName: currentMember.userName
+        };
+      }
+
+      const newMessage = await Message.create(messageData);
+
+      setMessages(prev => [...prev, newMessage]);
+      setMessageInput("");
+      setLastMessageTime(Date.now());
+
+      await ActivityLog.create({
+        userId: currentUser.id,
+        actionType: "sendMessage",
+        description: `Sent a message in room: "${room.name}"`,
+        ipAddress: "127.0.0.1",
+        userAgent: "WebApp (Simulated)",
+        location: "Simulated Location"
+      });
+
+    } catch (error) {
+      console.error('Error sending message:', error);
+      toast({
+        title: "Error",
+        description: "Failed to send message",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const sendSystemMessage = async (content: string) => {
+    try {
+      const systemMessage = await Message.create({
+        roomId: roomId!,
+        userId: 'SYSTEM',
+        userName: 'System',
+        content: content,
+      });
+      setMessages(prev => [...prev, systemMessage]);
+    } catch (error) {
+      console.error("Failed to send system message", error);
+    }
+  };
+
+  const findMemberByName = (name: string) => {
+    if (!name) return null;
+    return members.find(m => m.userName.toLowerCase() === name.toLowerCase());
+  };
+
+  const handleCommand = async (command: string, args: string[]) => {
+    const userRole = currentMember?.role || 'member';
+    const userRoleLevel = getRoleLevel(userRole);
+
+    switch (command) {
+      case 'help': {
+        const commands = [
+          { cmd: '/help', desc: 'Shows this list of commands.' },
+          { cmd: '/nick <name>', desc: 'Change your nickname.' },
+          { cmd: '/me <action>', desc: 'Perform an action message.' },
+          { cmd: '/shrug', desc: 'Send a shrug emoticon ¯\\_(ツ)_/¯' },
+          { cmd: '/tableflip', desc: 'Send a table flip (╯°□°)╯︵ ┻━┻' },
+          { cmd: '/unflip', desc: 'Put the table back ┬─┬ノ( º _ ºノ)' },
+          { cmd: '/lenny', desc: 'Send Lenny face ( ͡° ͜ʖ ͡°)' },
+          { cmd: '/roll [sides]', desc: 'Roll a dice (default 6 sides).' },
+          { cmd: '/flip', desc: 'Flip a coin (heads or tails).' },
+          { cmd: '/8ball <question>', desc: 'Ask the magic 8-ball a question.' },
+          { cmd: '/afk [message]', desc: 'Mark yourself as away from keyboard.' },
+          { cmd: '/back', desc: 'Mark yourself as back.' },
+          { cmd: '/whisper <user> <message>', desc: 'Send a private message.' },
+          { cmd: '/announce <message>', desc: 'Send an announcement (mods+).' },
+          { cmd: '/poll <question> | <option1> | <option2> ...', desc: 'Create a poll (mods+).' },
+        ];
+
+        const boostLevel = (room.boostCount || 0) >= 10 ? 3 : (room.boostCount || 0) >= 5 ? 2 : (room.boostCount || 0) >= 1 ? 1 : 0;
+
+        if (boostLevel >= 1) {
+          commands.push(
+            { cmd: '/party', desc: '🎉 Send a party message (Boost Level 1+)' },
+            { cmd: '/rainbow <text>', desc: '🌈 Send rainbow text (Boost Level 1+)' },
+            { cmd: '/hype', desc: '⚡ Send hype message (Boost Level 1+)' }
+          );
+        }
+
+        if (boostLevel >= 2) {
+          commands.push(
+            { cmd: '/confetti', desc: '🎊 Trigger confetti animation (Boost Level 2+)' },
+            { cmd: '/celebrate <name>', desc: '🎂 Celebrate someone (Boost Level 2+)' },
+            { cmd: '/giphy <search>', desc: '🎬 Send a GIF (Boost Level 2+)' }
+          );
+        }
+
+        if (boostLevel >= 3) {
+          commands.push(
+            { cmd: '/theme <color>', desc: '🎨 Set personal theme (Boost Level 3+)' },
+            { cmd: '/status <message>', desc: '💬 Set custom status (Boost Level 3+)' },
+            { cmd: '/reaction <emoji>', desc: '😊 Add reaction emoji (Boost Level 3+)' }
+          );
+        }
+
+        if (userRoleLevel >= 2) {
+          commands.push(
+            { cmd: '/kick <user> [duration] [reason]', desc: 'Kick a user (e.g., 10m, 1h, 2d).' },
+            { cmd: '/mute <user> [duration] [reason]', desc: 'Mute a user temporarily.' },
+            { cmd: '/unmute <user>', desc: 'Unmute a user.' },
+            { cmd: '/warn <user> [reason]', desc: 'Warn a user.' },
+            { cmd: '/clear', desc: 'Clear all messages.' },
+            { cmd: '/lock', desc: 'Lock the room (no new members).' },
+            { cmd: '/unlock', desc: 'Unlock the room.' }
+          );
+        }
+        if (userRoleLevel >= 3) {
+          commands.push(
+            { cmd: '/ban <user> [reason]', desc: 'Ban a user.' },
+            { cmd: '/unban <user>', desc: 'Unban a user.' },
+            { cmd: '/promote <user>', desc: 'Promote member to moderator.' },
+            { cmd: '/demote <user>', desc: 'Demote moderator to member.' },
+            { cmd: '/slowmode <seconds>', desc: 'Set slow mode (0-120s).' },
+            { cmd: '/setpowerlevel <user> <level>', desc: 'Set custom power level (0-100).' },
+            { cmd: '/announce <message>', desc: 'Send room announcement.' }
+          );
+        }
+        if (userRoleLevel >= 4) {
+          commands.push(
+            { cmd: '/op <user>', desc: 'Promote to admin.' },
+            { cmd: '/deop <user>', desc: 'Demote admin to member.' },
+            { cmd: '/manager <user>', desc: 'Promote to manager.' },
+            { cmd: '/transfer <user>', desc: 'Transfer room ownership.' },
+            { cmd: '/impersonate <user>', desc: 'Send messages as another user.' },
+            { cmd: '/unimpersonate', desc: 'Stop impersonating.' },
+            { cmd: '/testaccount <user>', desc: 'Toggle user test account status (App Admin only).' }
+          );
+        }
+        const helpMessageContent = commands.map(c => `${c.cmd} - ${c.desc}`).join("\n");
+        const helpMessage = {
+          id: `help-${Date.now()}`,
+          roomId: roomId!,
+          userId: 'SYSTEM',
+          userName: 'System',
+          content: `Available Commands:\n${helpMessageContent}`,
+          createdAt: new Date().toISOString()
+        };
+        setMessages(prev => [...prev, helpMessage]);
+        break;
+      }
+
+      case 'carl': {
+        const carlCommands = [
+          '**Carl Bot Commands:**',
+          '/carl help - Show Carl commands',
+          '/carl stats - View server statistics',
+          '/carl kick @user [reason] - Kick a user',
+          '/carl ban @user [reason] - Ban a user',
+          '/carl mute @user [duration] [reason] - Mute a user',
+          '/carl unmute @user - Unmute a user',
+          '/carl warn @user [reason] - Warn a user',
+          '/carl warnings @user - View user warnings',
+          '/carl clearwarnings @user - Clear user warnings',
+          '/carl lockdown - Lock all channels',
+          '/carl unlock - Unlock all channels',
+          '/carl purge [count] - Delete recent messages',
+          '/carl slowmode <seconds> - Set slow mode',
+          '/carl automod on/off - Toggle auto moderation',
+          '/carl welcome set <message> - Set welcome message',
+          '/carl welcome disable - Disable welcome messages',
+          '/carl role add @user <role> - Add role to user',
+          '/carl role remove @user <role> - Remove role from user',
+          '/carl roles - List all server roles',
+          '/carl membercount - Show member count',
+          '/carl serverinfo - Display server information',
+          '/carl userinfo @user - Display user information',
+          '/carl avatar @user - Show user avatar',
+          '/carl banner - Show server banner',
+          '/carl icon - Show server icon',
+          '/carl channels - List all channels',
+          '/carl invites - Show active invites',
+          '/carl bans - List all banned users',
+          '/carl mutes - List all muted users',
+          '/carl audit - Show recent mod actions',
+          '/carl backup - Create server backup',
+          '/carl restore - Restore from backup',
+          '/carl export - Export server data',
+          '/carl filter add <word> - Add word to filter',
+          '/carl filter remove <word> - Remove word from filter',
+          '/carl filter list - Show filtered words',
+          '/carl autorespond add <trigger> <response> - Add auto-response',
+          '/carl autorespond remove <trigger> - Remove auto-response',
+          '/carl autorespond list - Show auto-responses',
+          '/carl announce <channel> <message> - Send announcement',
+          '/carl embed <title> <description> - Send embed message',
+          '/carl poll <question> <options...> - Create a poll',
+          '/carl timer <duration> <message> - Set a reminder',
+          '/carl giveaway <prize> <duration> - Start a giveaway',
+          '/carl rank @user - Show user rank/level',
+          '/carl leaderboard - Show server leaderboard',
+          '/carl levels - Show level roles',
+          '/carl setlevel @user <level> - Set user level',
+          '/carl economy balance - Check your balance',
+          '/carl economy give @user <amount> - Give currency',
+          '/carl economy take @user <amount> - Take currency',
+          '/carl shop - View item shop',
+          '/carl buy <item> - Purchase an item',
+          '/carl inventory - View your items',
+          '/carl daily - Claim daily reward',
+          '/carl rep @user - Give reputation point',
+          '/carl profile @user - View user profile',
+          '/carl marry @user - Propose marriage',
+          '/carl divorce - End marriage',
+          '/carl color <hex> - Set your name color',
+          '/carl badge <name> - Equip a badge',
+          '/carl achievements - View achievements',
+        ].join("\n");
+        
+        const carlHelpMessage = {
+          id: `carl-help-${Date.now()}`,
+          roomId: roomId!,
+          userId: 'SYSTEM',
+          userName: 'Carl Bot',
+          content: carlCommands,
+          createdAt: new Date().toISOString()
+        };
+        setMessages(prev => [...prev, carlHelpMessage]);
+        break;
+      }
+
+      case 'stats': {
+        const totalMessages = messages.length;
+        const totalMembers = members.length;
+        const activeModerators = members.filter(m => ['moderator', 'admin', 'manager', 'owner'].includes(m.role)).length;
+        
+        const statsMessage = {
+          id: `stats-${Date.now()}`,
+          roomId: roomId!,
+          userId: 'SYSTEM',
+          userName: 'Carl Bot',
+          content: `📊 **Server Statistics**
+
+👥 Total Members: ${totalMembers}
+💬 Total Messages: ${totalMessages}
+🛡️ Moderators: ${activeModerators}
+📅 Created: ${format(new Date(room.createdAt), 'MMM d, yyyy')}
+🎯 Category: ${room.category}
+${room.boostCount ? `✨ Boost Level: ${(room.boostCount || 0) >= 10 ? 3 : (room.boostCount || 0) >= 5 ? 2 : 1}` : ''}`,
+          createdAt: new Date().toISOString()
+        };
+        setMessages(prev => [...prev, statsMessage]);
+        break;
+      }
+
+      case 'serverinfo': {
+        const info = `🏠 **Server Information**
+
+📝 Name: ${room.name}
+📄 Description: ${room.description || 'No description'}
+🔒 Privacy: ${room.isPublic ? 'Public' : 'Private'}
+🎯 Category: ${room.category}
+👥 Members: ${room.memberCount || 0}
+📅 Created: ${format(new Date(room.createdAt), 'PPP')}
+🔗 Invite Code: ${room.inviteCode}
+${room.isVerified ? '✅ Verified Server' : ''}`;
+        
+        await sendSystemMessage(info);
+        break;
+      }
+
+      case 'membercount': {
+        await sendSystemMessage(`👥 This server has ${members.length} member${members.length === 1 ? '' : 's'}`);
+        break;
+      }
+
+      case 'userinfo': {
+        const targetName = args[0];
+        if (!targetName) return toast({ title: "Invalid", description: "Usage: /userinfo <username>", variant: "destructive" });
+        
+        const targetMember = findMemberByName(targetName);
+        if (!targetMember) return toast({ title: "Error", description: `User '${targetName}' not found.`, variant: "destructive" });
+        
+        const info = `👤 **User Information**
+
+📝 Name: ${targetMember.userName}
+🎭 Role: ${targetMember.role}
+📅 Joined: ${format(new Date(targetMember.joinedAt), 'PPP')}
+🔢 User ID: ${targetMember.userId.slice(0, 8)}...`;
+        
+        await sendSystemMessage(info);
+        break;
+      }
+
+      case 'roles': {
+        const roleCount: any = { owner: 0, admin: 0, manager: 0, moderator: 0, member: 0 };
+        members.forEach(m => roleCount[m.role] = (roleCount[m.role] || 0) + 1);
+        
+        const rolesList = `🎭 **Server Roles**
+
+👑 Owner: ${roleCount.owner}
+⚡ Admin: ${roleCount.admin}
+🔧 Manager: ${roleCount.manager}
+🛡️ Moderator: ${roleCount.moderator}
+👤 Member: ${roleCount.member}`;
+        
+        await sendSystemMessage(rolesList);
+        break;
+      }
+
+      case 'quote': {
+        const quotes = [
+          "The only way to do great work is to love what you do. - Steve Jobs",
+          "Innovation distinguishes between a leader and a follower. - Steve Jobs",
+          "Stay hungry, stay foolish. - Steve Jobs",
+          "The future belongs to those who believe in the beauty of their dreams. - Eleanor Roosevelt",
+          "Success is not final, failure is not fatal: It is the courage to continue that counts. - Winston Churchill"
+        ];
+        const quote = quotes[Math.floor(Math.random() * quotes.length)];
+        await sendSystemMessage(`💭 ${quote}`);
+        break;
+      }
+
+      case 'fact': {
+        const facts = [
+          "Honey never spoils. Archaeologists have found 3000-year-old honey in Egyptian tombs that's still edible!",
+          "A group of flamingos is called a 'flamboyance'.",
+          "Octopuses have three hearts and blue blood.",
+          "The shortest war in history lasted 38 minutes.",
+          "A day on Venus is longer than its year."
+        ];
+        const fact = facts[Math.floor(Math.random() * facts.length)];
+        await sendSystemMessage(`🧠 Did you know? ${fact}`);
+        break;
+      }
+
+      case 'joke': {
+        const jokes = [
+          "Why don't scientists trust atoms? Because they make up everything!",
+          "What do you call a bear with no teeth? A gummy bear!",
+          "Why did the scarecrow win an award? He was outstanding in his field!",
+          "What do you call a fake noodle? An impasta!",
+          "Why don't eggs tell jokes? They'd crack each other up!"
+        ];
+        const joke = jokes[Math.floor(Math.random() * jokes.length)];
+        await sendSystemMessage(`😄 ${joke}`);
+        break;
+      }
+
+      case 'time': {
+        const now = new Date();
+        await sendSystemMessage(`🕐 Current time: ${now.toLocaleTimeString()} (${now.toLocaleDateString()})`);
+        break;
+      }
+
+      case 'uptime': {
+        const uptime = Date.now() - new Date(room.createdAt).getTime();
+        const days = Math.floor(uptime / (1000 * 60 * 60 * 24));
+        const hours = Math.floor((uptime % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+        await sendSystemMessage(`⏱️ Server has been running for ${days} days and ${hours} hours`);
+        break;
+      }
+
+      case 'ping': {
+        const start = Date.now();
+        await sendSystemMessage(`🏓 Pong! Latency: ${Date.now() - start}ms`);
+        break;
+      }
+
+      case 'choose': {
+        const choices = args.join(' ').split(',').map(c => c.trim()).filter(Boolean);
+        if (choices.length < 2) return toast({ title: "Invalid", description: "Usage: /choose option1, option2, option3", variant: "destructive" });
+        const chosen = choices[Math.floor(Math.random() * choices.length)];
+        await sendSystemMessage(`🎯 I choose: **${chosen}**`);
+        break;
+      }
+
+      case 'reverse': {
+        const text = args.join(' ');
+        if (!text) return toast({ title: "Invalid", description: "Provide text to reverse!", variant: "destructive" });
+        await sendSystemMessage(`🔄 ${text.split('').reverse().join('')}`);
+        break;
+      }
+
+      case 'say': {
+        if (userRoleLevel < 2) return toast({ title: "Permission Denied", description: "Moderators and above can use this command.", variant: "destructive" });
+        const text = args.join(' ');
+        if (!text) return toast({ title: "Invalid", description: "Provide text!", variant: "destructive" });
+        await sendSystemMessage(text);
+        break;
+      }
+
+      case 'embed': {
+        if (userRoleLevel < 2) return toast({ title: "Permission Denied", description: "Moderators and above can use this command.", variant: "destructive" });
+        const title = args[0];
+        const description = args.slice(1).join(' ');
+        if (!title || !description) return toast({ title: "Invalid", description: "Usage: /embed <title> <description>", variant: "destructive" });
+        await sendSystemMessage(`📋 **${title}**
+
+${description}`);
+        break;
+      }
+
+      case 'remind': {
+        const duration = args[0];
+        const reminder = args.slice(1).join(' ');
+        if (!duration || !reminder) return toast({ title: "Invalid", description: "Usage: /remind <time> <message>", variant: "destructive" });
+        await sendSystemMessage(`⏰ Reminder set for ${duration}: "${reminder}" (Feature coming soon!)`);
+        break;
+      }
+
+      case 'weather': {
+        const location = args.join(' ') || 'your location';
+        await sendSystemMessage(`🌤️ Weather for ${location}: Feature coming soon! Stay tuned.`);
+        break;
+      }
+
+      case 'translate': {
+        const text = args.join(' ');
+        if (!text) return toast({ title: "Invalid", description: "Provide text to translate!", variant: "destructive" });
+        await sendSystemMessage(`🌐 Translation: Feature coming soon! Text: "${text}"`);
+        break;
+      }
+
+      case 'math': {
+        const expression = args.join(' ');
+        if (!expression) return toast({ title: "Invalid", description: "Provide a math expression!", variant: "destructive" });
+        try {
+          const result = eval(expression);
+          await sendSystemMessage(`🧮 ${expression} = ${result}`);
+        } catch {
+          toast({ title: "Error", description: "Invalid math expression", variant: "destructive" });
+        }
+        break;
+      }
+
+      case 'count': {
+        const text = args.join(' ');
+        if (!text) return toast({ title: "Invalid", description: "Provide text to count!", variant: "destructive" });
+        await sendSystemMessage(`🔢 Character count: ${text.length} | Word count: ${text.split(' ').length}`);
+        break;
+      }
+
+      case 'avatar': {
+        const targetName = args[0];
+        if (!targetName) return toast({ title: "Invalid", description: "Usage: /avatar <username>", variant: "destructive" });
+        const targetMember = findMemberByName(targetName);
+        if (!targetMember) return toast({ title: "Error", description: `User '${targetName}' not found.`, variant: "destructive" });
+        await sendSystemMessage(`🖼️ Avatar for ${targetMember.userName}: Feature shows user avatar`);
+        break;
+      }
+
+      case 'rank': {
+        await sendSystemMessage(`📊 Ranking system: Feature coming soon!`);
+        break;
+      }
+
+      case 'level': {
+        await sendSystemMessage(`⭐ Level: Feature coming soon!`);
+        break;
+      }
+
+      case 'rep': {
+        const targetName = args[0];
+        if (!targetName) return toast({ title: "Invalid", description: "Usage: /rep <username>", variant: "destructive" });
+        const targetMember = findMemberByName(targetName);
+        if (!targetMember) return toast({ title: "Error", description: `User '${targetName}' not found.`, variant: "destructive" });
+        await sendSystemMessage(`⭐ Gave reputation point to ${targetMember.userName}`);
+        break;
+      }
+
+      case 'transferdata': {
+        if (currentUser.role !== 'admin') {
+          return toast({ 
+            title: "Permission Denied", 
+            description: "Only app administrators can transfer account data.", 
+            variant: "destructive" 
+          });
+        }
+        
+        const fromEmail = args[0];
+        const toEmail = args[1];
+        
+        if (!fromEmail || !toEmail) {
+          return toast({ 
+            title: "Invalid Command", 
+            description: "Usage: /transferdata <from-email> <to-email>", 
+            variant: "destructive" 
+          });
+        }
+
+        try {
+          const allUsers = await User.list();
+          const fromUser = allUsers.find(u => u.email === fromEmail);
+          const toUser = allUsers.find(u => u.email === toEmail);
+          
+          if (!fromUser) {
+            return toast({ 
+              title: "Error", 
+              description: `Source account '${fromEmail}' not found.`, 
+              variant: "destructive" 
+            });
+          }
+          
+          if (!toUser) {
+            return toast({ 
+              title: "Error", 
+              description: `Destination account '${toEmail}' not found.`, 
+              variant: "destructive" 
+            });
+          }
+
+          // Transfer profile data
+          await User.update(toUser.id, {
+            firstName: fromUser.firstName,
+            lastName: fromUser.lastName,
+            profileImageUrl: fromUser.profileImageUrl,
+            bio: fromUser.bio,
+            website: fromUser.website,
+            socialLinks: fromUser.socialLinks,
+            hasAirPlus: fromUser.hasAirPlus,
+            boostCount: fromUser.boostCount,
+            themeSettings: fromUser.themeSettings
+          });
+
+          // Transfer room memberships
+          const memberships = await RoomMember.filter({ userId: fromUser.id });
+          for (const membership of memberships) {
+            await RoomMember.create({
+              roomId: membership.roomId,
+              userId: toUser.id,
+              userName: `${toUser.firstName || ''} ${toUser.lastName || ''}`.trim() || toUser.email,
+              role: membership.role,
+              customPowerLevel: membership.customPowerLevel,
+              joinedAt: membership.joinedAt
+            });
+            await RoomMember.delete(membership.id);
+          }
+
+          // Transfer messages
+          const userMessages = await Message.filter({ userId: fromUser.id });
+          for (const msg of userMessages) {
+            await Message.update(msg.id, {
+              userId: toUser.id,
+              userName: `${toUser.firstName || ''} ${toUser.lastName || ''}`.trim() || toUser.email
+            });
+          }
+
+          // Transfer activity logs
+          const logs = await ActivityLog.filter({ userId: fromUser.id });
+          for (const log of logs) {
+            await ActivityLog.update(log.id, {
+              userId: toUser.id
+            });
+          }
+
+          await sendSystemMessage(`✅ **Data Transfer Complete**
+
+Successfully transferred all data from ${fromEmail} to ${toEmail}:
+- Profile information
+- ${memberships.length} room membership(s)
+- ${userMessages.length} message(s)
+- ${logs.length} activity log(s)
+
+Transferred by: ${currentMember.userName}`);
+          
+          toast({
+            title: "Transfer Complete",
+            description: `All data transferred from ${fromEmail} to ${toEmail}`
+          });
+        } catch (error) {
+          console.error("Error transferring data:", error);
+          toast({
+            title: "Error",
+            description: "Failed to transfer account data",
+            variant: "destructive"
+          });
+        }
+        break;
+      }
+
+      default:
+        toast({ title: "Unknown Command", description: `Command '/${command}' not found. Type /help for a list of commands.`, variant: "destructive" });
+        break;
+    }
+  };
+
+  const handleLeaveRoom = async () => {
+    try {
+      setIsLeavingRoom(true);
+
+      if (!currentMember) return;
+
+      await RoomMember.delete(currentMember.id);
+
+      await Room.update(roomId!, {
+        memberCount: Math.max(0, (room.memberCount || 1) - 1)
+      });
+
+      toast({
+        title: "Left Room",
+        description: `You have left ${room.name}`,
+      });
+
+      router.push(createPageUrl('Home'));
+    } catch (error) {
+      console.error('Error leaving room:', error);
+      toast({
+        title: "Error",
+        description: "Failed to leave room",
+        variant: "destructive"
+      });
+    } finally {
+      setIsLeavingRoom(false);
+    }
+  };
+
+  const parseDuration = (durationStr: string): number | null => {
+    const match = durationStr.match(/^(\d+)([mhd])$/);
+    if (!match) return null;
+    const value = parseInt(match[1]);
+    const unit = match[2];
+    switch (unit) {
+      case 'm': return value * 60 * 1000;
+      case 'h': return value * 60 * 60 * 1000;
+      case 'd': return value * 24 * 60 * 60 * 1000;
+      default: return null;
+    }
+  };
+
+  const getRoleLevel = (role: string) => {
+    const levels: Record<string, number> = {
+      owner: 4,
+      admin: 3,
+      manager: 2.5,
+      moderator: 2,
+      member: 1
+    };
+    return levels[role] || 0;
+  };
+
+  const canDemMessages = () => {
+    const whoCanDem = room.settings?.whoCanDem || "everyone";
+    const roleLevel = getRoleLevel(currentMember?.role || "member");
+
+    if (whoCanDem === "everyone") return true;
+    if (whoCanDem === "moderators") return roleLevel >= 2;
+    if (whoCanDem === "admins") return roleLevel >= 3;
+    if (whoCanDem === "owner") return roleLevel >= 4;
+    return false;
+  };
+
+  const handleDemMessage = async (messageId: string) => {
+    if (!currentUser || !canDemMessages()) {
+      toast({
+        title: "Permission Denied",
+        description: "You don't have permission to dem messages",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    try {
+      const existingDem = await Dem.filter({
+        messageId: messageId,
+        userId: currentUser.id
+      });
+
+      if (existingDem.length > 0) {
+        await Dem.delete(existingDem[0].id);
+        const message = messages.find(m => m.id === messageId);
+        if (message) {
+          await Message.update(messageId, {
+            demCount: Math.max(0, (message.demCount || 0) - 1)
+          });
+        }
+      } else {
+        await Dem.create({
+          messageId: messageId,
+          userId: currentUser.id,
+          roomId: roomId!
+        });
+        const message = messages.find(m => m.id === messageId);
+        if (message) {
+          await Message.update(messageId, {
+            demCount: (message.demCount || 0) + 1
+          });
+        }
+      }
+
+      await loadMessages();
+    } catch (error) {
+      console.error('Error demming message:', error);
+    }
+  };
+
+  const handleDeleteMessage = async (messageId: string) => {
+    try {
+      await Message.delete(messageId);
+      setMessages(messages.filter(m => m.id !== messageId));
+      toast({
+        title: "Message Deleted",
+        description: "The message has been removed",
+      });
+    } catch (error) {
+      console.error('Error deleting message:', error);
+      toast({
+        title: "Error",
+        description: "Failed to delete message",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleEditMessage = async (messageId: string, newContent: string) => {
+    try {
+      await Message.update(messageId, {
+        content: newContent,
+        isEdited: true,
+        editedAt: new Date().toISOString()
+      });
+      setMessages(messages.map(m =>
+        m.id === messageId
+          ? { ...m, content: newContent, isEdited: true, editedAt: new Date().toISOString() }
+          : m
+      ));
+      toast({
+        title: "Success",
+        description: "Message updated successfully"
+      });
+    } catch (error) {
+      console.error('Error editing message:', error);
+      toast({
+        title: "Error",
+        description: "Failed to edit message",
+        variant: "destructive"
+      });
+    }
+  };
+
+  if (!isLoggedIn || !roomId) return null;
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[calc(100vh-4rem)]">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-neutral-50"></div>
+      </div>
+    );
+  }
+
+  if (!room || !currentMember) {
+    return (
+      <div className="flex items-center justify-center min-h-[calc(100vh-4rem)]">
+        <div className="text-center px-4">
+          <h2 className="text-2xl font-bold mb-2">Room Not Found</h2>
+          <p className="text-neutral-400 mb-4">This room may have been deleted, or you don't have permission to view it.</p>
+          <Button onClick={() => router.push(createPageUrl('Home'))}>
+            Go Home
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col h-[calc(100vh-4rem)]">
+      <div className="border-b border-neutral-800 bg-neutral-950/95 backdrop-blur-sm">
+        <div className="container mx-auto px-4">
+          <div className="flex items-center justify-between h-16">
+            <div className="flex items-center gap-3">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => router.push(createPageUrl('Home'))}
+                className="text-neutral-400 hover:text-neutral-50"
+              >
+                <ArrowLeft className="h-5 w-5" />
+              </Button>
+              <div>
+                <h1 className="text-lg font-bold flex items-center gap-2">
+                  {room.name}
+                  {room.isVerified && (
+                    <CheckCircle className="h-5 w-5 text-blue-500" title="Verified Room" />
+                  )}
+                </h1>
+                {(room.boostCount || 0) > 0 && (
+                  <div className="flex items-center gap-1 mt-1">
+                    <Sparkles className="h-3 w-3 text-purple-500" />
+                    <span className="text-xs text-neutral-400">
+                      Level {(room.boostCount || 0) >= 10 ? 3 : (room.boostCount || 0) >= 5 ? 2 : 1} Boosted
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {currentUser?.hasAirPlus && (
+                <Badge className="bg-gradient-to-r from-purple-500 to-pink-500 text-white border-0">
+                  <Crown className="h-3 w-3 mr-1" />
+                  AIR+
+                </Badge>
+              )}
+              {(currentUser?.hasAirPlus || currentUser?.role === 'admin') && (
+                <ServerBoostDialog
+                  room={room}
+                  currentUser={currentUser}
+                  onBoostSuccess={loadRoomData}
+                />
+              )}
+              {room.settings?.voiceEnabled && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => {
+                    setCallType("voice");
+                    setInCall(true);
+                  }}
+                  className="text-neutral-400 hover:text-neutral-50"
+                >
+                  <Phone className="h-5 w-5" />
+                </Button>
+              )}
+              {room.settings?.videoEnabled && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => {
+                    setCallType("video");
+                    setInCall(true);
+                  }}
+                  className="text-neutral-400 hover:text-neutral-50"
+                >
+                  <Video className="h-5 w-5" />
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setShowMembers(!showMembers)}
+                className="text-neutral-400 hover:text-neutral-50"
+              >
+                <Users className="h-5 w-5" />
+              </Button>
+              {(currentMember.role === 'owner' || currentMember.role === 'admin') && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setShowSettings(!showSettings)}
+                  className="text-neutral-400 hover:text-neutral-50"
+                >
+                  <Settings className="h-5 w-5" />
+                </Button>
+              )}
+              {currentMember.role !== 'owner' && (
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      className="text-red-400 hover:text-red-300 hover:bg-red-950"
+                    >
+                      Leave Room
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent className="bg-neutral-900 border-neutral-800">
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Leave {room.name}?</AlertDialogTitle>
+                      <AlertDialogDescription className="text-neutral-400">
+                        Are you sure you want to leave this room? You'll need an invite code to rejoin.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel className="bg-neutral-800 text-neutral-50 hover:bg-neutral-700 border-neutral-700">
+                        Cancel
+                      </AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={handleLeaveRoom}
+                        disabled={isLeavingRoom}
+                        className="bg-red-600 text-white hover:bg-red-700"
+                      >
+                        {isLeavingRoom ? "Leaving..." : "Leave Room"}
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {inCall && (
+        <CallInterface
+          roomId={roomId!}
+          callType={callType}
+          onEndCall={() => setInCall(false)}
+        />
+      )}
+
+      <div className="flex-1 overflow-hidden flex">
+        <div className="flex-1 flex flex-col">
+          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+            {messages.map((message) => (
+              <MessageItem
+                key={message.id}
+                message={message}
+                currentUserId={currentUser?.id}
+                currentMemberRole={currentMember?.role}
+                currentUserRole={currentUser?.role}
+                onDem={handleDemMessage}
+                onDelete={handleDeleteMessage}
+                onEdit={handleEditMessage}
+                canDem={canDemMessages()}
+              />
+            ))}
+            <div ref={messagesEndRef} />
+          </div>
+
+          <div className="border-t border-neutral-800 p-4 bg-neutral-950">
+            <form onSubmit={handleSendMessage} className="flex gap-2">
+              <Input
+                value={messageInput}
+                onChange={(e) => setMessageInput(e.target.value)}
+                placeholder="Type a message..."
+                className="flex-1 bg-neutral-900 border-neutral-800 text-neutral-50 placeholder:text-neutral-500"
+              />
+              <Button type="submit" size="icon" className="bg-neutral-50 text-neutral-950 hover:bg-neutral-200">
+                <Send className="h-4 w-4" />
+              </Button>
+            </form>
+          </div>
+        </div>
+
+        {showMembers && (
+          <MembersList
+            members={members}
+            bots={bots}
+            currentMember={currentMember}
+            roomId={roomId}
+            onClose={() => setShowMembers(false)}
+            onUpdate={loadRoomData}
+          />
+        )}
+
+        {showSettings && (
+          <RoomSettings
+            room={room}
+            onClose={() => setShowSettings(false)}
+            onUpdate={loadRoomData}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
