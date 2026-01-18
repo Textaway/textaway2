@@ -1,0 +1,92 @@
+"use client";
+
+import React, { useState, useEffect } from "react";
+import { User } from "@/entities/User";
+import useAppLevelAuth from "@/hooks/useAppLevelAuth";
+import { useRouter } from "next/navigation";
+import { createPageUrl } from "@/utils";
+import { ArrowLeft, User as UserIcon, Shield, Palette } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import ProfileForm from "../components/profile/ProfileForm";
+import ThemeSettings from "../components/profile/ThemeSettings";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import SecurityPage from "./Security";
+
+export default function ProfileSettingsPage() {
+  const { isLoggedIn } = useAppLevelAuth();
+  const router = useRouter();
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (isLoggedIn) {
+      const fetchUser = async () => {
+        try {
+          setLoading(true);
+          const user = await User.me();
+          setCurrentUser(user);
+        } catch (error: any) {
+          // If user not found, logout
+          if (error?.response?.status === 404 || error?.message?.includes('not found') || error?.message?.includes('404')) {
+            console.warn("User not found in Profile, logging out...");
+            router.push(createPageUrl("login"));
+            return;
+          }
+          console.error("Failed to fetch user data:", error);
+        } finally {
+          setLoading(false);
+        }
+      };
+      fetchUser();
+    }
+  }, [isLoggedIn]);
+
+  if (!isLoggedIn) {
+    return null;
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[calc(100vh-4rem)]">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-neutral-50"></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="container mx-auto px-4 py-8 pb-24 md:pb-8">
+      <div className="max-w-2xl mx-auto">
+        <div className="mb-8">
+          <Button
+            variant="ghost"
+            onClick={() => router.back()}
+            className="mb-4 text-neutral-400 hover:text-neutral-50"
+          >
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back
+          </Button>
+          <h1 className="text-3xl font-bold mb-2">Settings</h1>
+          <p className="text-neutral-400">Manage your account and profile settings</p>
+        </div>
+        
+        <Tabs defaultValue="profile" className="w-full">
+          <TabsList className="grid w-full grid-cols-3 bg-neutral-900 border border-neutral-800 mb-6">
+            <TabsTrigger value="profile"><UserIcon className="h-4 w-4 mr-2" />Profile</TabsTrigger>
+            <TabsTrigger value="theme"><Palette className="h-4 w-4 mr-2" />Theme</TabsTrigger>
+            <TabsTrigger value="security"><Shield className="h-4 w-4 mr-2" />Security</TabsTrigger>
+          </TabsList>
+          <TabsContent value="profile">
+            {currentUser && <ProfileForm currentUser={currentUser} />}
+          </TabsContent>
+          <TabsContent value="theme">
+            {currentUser && <ThemeSettings currentUser={currentUser} />}
+          </TabsContent>
+          <TabsContent value="security">
+            <SecurityPage />
+          </TabsContent>
+        </Tabs>
+
+      </div>
+    </div>
+  );
+}
