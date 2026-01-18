@@ -1,0 +1,224 @@
+"use client";
+
+import React, { useState } from "react";
+import { Room } from "@/entities/Room";
+import { RoomMember } from "@/entities/RoomMember";
+import { User } from "@/entities/User";
+import { Bot } from "@/entities/Bot";
+import { BotInstance } from "@/entities/BotInstance";
+import { ActivityLog } from "@/entities/ActivityLog";
+import { useRouter } from "next/navigation";
+import { createPageUrl } from "@/utils";
+import { useToast } from "@/components/ui/use-toast";
+import useAppLevelAuth from "@/hooks/useAppLevelAuth";
+import { ArrowLeft } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+
+const CATEGORIES = [
+  { value: "general", label: "General" },
+  { value: "gaming", label: "Gaming" },
+  { value: "tech", label: "Tech" },
+  { value: "music", label: "Music" },
+  { value: "art", label: "Art" },
+  { value: "sports", label: "Sports" },
+  { value: "education", label: "Education" },
+  { value: "other", label: "Other" }
+];
+
+export default function CreateRoomPage() {
+  const { isLoggedIn } = useAppLevelAuth();
+  const { toast } = useToast();
+  const router = useRouter();
+  const [loading, setLoading] = useState(false);
+  const [formData, setFormData] = useState({
+    name: "",
+    description: "",
+    category: "general",
+    isPublic: true
+  });
+
+  const generateInviteCode = () => {
+    return Math.random().toString(36).substring(2, 10).toUpperCase();
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formData.name.trim()) {
+      toast({
+        title: "Error",
+        description: "Room name is required",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const user = await User.me();
+      
+      const inviteCode = generateInviteCode();
+      
+      const room = await Room.create({
+        name: formData.name,
+        description: formData.description,
+        category: formData.category,
+        isPublic: formData.isPublic,
+        inviteCode: inviteCode,
+        memberCount: 1
+      });
+
+      await RoomMember.create({
+        roomId: room.id,
+        userId: user.id,
+        userName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email,
+        role: "owner",
+        joinedAt: new Date().toISOString()
+      });
+
+      // Auto-add Carl Bot to the new room
+      try {
+        const carlBot = await Bot.filter({ name: "Carl Bot", botType: "community" });
+        if (carlBot.length > 0) {
+          await BotInstance.create({
+            botId: carlBot[0].id,
+            botName: carlBot[0].name,
+            roomId: room.id,
+            addedBy: user.id,
+            addedByName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email,
+            isEnabled: true,
+            addedAt: new Date().toISOString()
+          });
+          
+          await Bot.update(carlBot[0].id, {
+            installCount: (carlBot[0].installCount || 0) + 1
+          });
+        }
+      } catch (error) {
+        console.error("Failed to add Carl Bot:", error);
+      }
+
+      await ActivityLog.create({
+        userId: user.id,
+        actionType: "createRoom",
+        description: `Created room: "${room.name}"`,
+        ipAddress: "127.0.0.1",
+        userAgent: "WebApp (Simulated)",
+        location: "Simulated Location"
+      });
+
+      toast({
+        title: "Success",
+        description: "Room created successfully",
+      });
+
+      router.push(createPageUrl('Room', { id: room.id }));
+    } catch (error) {
+      console.error('Error creating room:', error);
+      toast({
+        title: "Error",
+        description: "Failed to create room",
+        variant: "destructive"
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!isLoggedIn) return null;
+
+  return (
+    <div className="container mx-auto px-4 py-8 pb-24 md:pb-8">
+      <div className="max-w-2xl mx-auto">
+        <div className="mb-8">
+          <Button
+            variant="ghost"
+            onClick={() => router.push(createPageUrl('Home'))}
+            className="mb-4 text-neutral-400 hover:text-neutral-50"
+          >
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back
+          </Button>
+          <h1 className="text-3xl font-bold mb-2">Create a Room</h1>
+          <p className="text-neutral-400">Set up a new chat room for your community</p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-6 bg-neutral-900 border border-neutral-800 rounded-lg p-6">
+          <div className="space-y-2">
+            <Label htmlFor="name">Room Name *</Label>
+            <Input
+              id="name"
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              placeholder="Enter room name"
+              className="bg-neutral-950 border-neutral-800 text-neutral-50"
+              required
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="description">Description</Label>
+            <Textarea
+              id="description"
+              value={formData.description}
+              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              placeholder="What's this room about?"
+              rows={3}
+              className="bg-neutral-950 border-neutral-800 text-neutral-50"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="category">Category</Label>
+            <Select value={formData.category} onValueChange={(value) => setFormData({ ...formData, category: value })}>
+              <SelectTrigger className="bg-neutral-950 border-neutral-800 text-neutral-50">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-neutral-900 border-neutral-800">
+                {CATEGORIES.map(cat => (
+                  <SelectItem key={cat.value} value={cat.value} className="text-neutral-50">
+                    {cat.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <Label htmlFor="isPublic">Public Room</Label>
+              <p className="text-sm text-neutral-400">Allow anyone to discover and join this room</p>
+            </div>
+            <Switch
+              id="isPublic"
+              checked={formData.isPublic}
+              onCheckedChange={(checked) => setFormData({ ...formData, isPublic: checked })}
+            />
+          </div>
+
+          <div className="flex gap-3 pt-4">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => router.push(createPageUrl('Home'))}
+              className="flex-1 border-neutral-800 text-neutral-50 hover:bg-neutral-800"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              disabled={loading}
+              className="flex-1 bg-neutral-50 text-neutral-950 hover:bg-neutral-200"
+            >
+              {loading ? "Creating..." : "Create Room"}
+            </Button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
