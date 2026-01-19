@@ -1,0 +1,261 @@
+"use client";
+
+import React, { useState, useEffect } from "react";
+import { Dem } from "@/entities/Dem";
+import { Message } from "@/entities/Message";
+import { Flame, Trash2, Crown } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { useToast } from "@/components/ui/use-toast";
+import { Badge } from "@/components/ui/badge";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+
+interface MessageItemProps {
+  message: any;
+  currentUserId?: string;
+  currentMemberRole?: string;
+  currentUserRole?: string;
+  onDem: (messageId: string) => void;
+  onDelete: (messageId: string) => void;
+  onEdit?: (messageId: string, newContent: string) => void;
+  canDem: boolean;
+}
+
+export default function MessageItem({ 
+  message, 
+  currentUserId, 
+  currentMemberRole,
+  currentUserRole,
+  onDem, 
+  onDelete,
+  onEdit,
+  canDem 
+}: MessageItemProps) {
+  const { toast } = useToast();
+  const [hasDemmed, setHasDemmed] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [editContent, setEditContent] = useState(message.content);
+
+  useEffect(() => {
+    checkIfDemmed();
+  }, [message.id, currentUserId]);
+
+  const checkIfDemmed = async () => {
+    if (!currentUserId || message.userId === 'SYSTEM') return;
+    try {
+      const dems = await Dem.filter({ 
+        messageId: message.id, 
+        userId: currentUserId 
+      });
+      setHasDemmed(dems.length > 0);
+    } catch (error) {
+      console.error('Error checking dem status:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const canDeleteMessage = () => {
+    if (message.userId === 'SYSTEM') return false;
+    const isOwnMessage = message.userId === currentUserId;
+    const isModerator = currentMemberRole === 'moderator' || currentMemberRole === 'admin' || currentMemberRole === 'owner';
+    const isAppAdmin = currentUserRole === 'admin';
+    return isOwnMessage || isModerator || isAppAdmin;
+  };
+
+  const canEditMessage = () => {
+    if (message.userId === 'SYSTEM') return false;
+    const isOwnMessage = message.userId === currentUserId;
+    const isAppAdmin = currentUserRole === 'admin';
+    return (isOwnMessage || isAppAdmin) && onEdit;
+  };
+
+  const handleEditMessage = async () => {
+    if (!editContent.trim() || editContent === message.content) {
+      setIsEditDialogOpen(false);
+      return;
+    }
+
+    try {
+      if (onEdit) {
+        await onEdit(message.id, editContent);
+        toast({
+          title: "Success",
+          description: "Message edited successfully"
+        });
+        setIsEditDialogOpen(false);
+      }
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to edit message",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const isOwnMessage = message.userId === currentUserId;
+  const isSystemMessage = message.userId === 'SYSTEM';
+  const isActionMessage = message.content?.startsWith('*') && message.content?.endsWith('*');
+
+  if (isSystemMessage) {
+    return (
+      <div className="text-center my-2 px-4">
+        <p className="text-xs text-neutral-500 italic whitespace-pre-wrap">{message.content}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`flex gap-3 ${isOwnMessage ? 'flex-row-reverse' : 'flex-row'} group`}>
+      <div className="flex-shrink-0">
+        <div className="w-10 h-10 rounded-full bg-neutral-800 flex items-center justify-center text-sm font-semibold">
+          {message.userName?.[0]?.toUpperCase() || 'U'}
+        </div>
+      </div>
+      <div className={`flex-1 max-w-[70%] ${isOwnMessage ? 'items-end' : 'items-start'} flex flex-col`}>
+        <div className="flex items-center gap-2 mb-1">
+          <span className="text-sm font-semibold">{message.userName}</span>
+          {message.userHasAirPlus && (
+            <Badge className="h-4 px-1 bg-gradient-to-r from-purple-500 to-pink-500 text-white border-0 text-[10px] flex items-center gap-0.5">
+              <Crown className="h-2 w-2" />
+              AIR+
+            </Badge>
+          )}
+          {message.impersonatedBy && (
+            <span className="text-xs text-neutral-500">(via {message.impersonatedBy.userName})</span>
+          )}
+          <span className="text-xs text-neutral-500">
+            {new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+          </span>
+        </div>
+        <div className={`rounded-lg px-4 py-2 ${
+          isOwnMessage 
+            ? 'bg-neutral-50 text-neutral-950' 
+            : 'bg-neutral-800 text-neutral-50'
+        }`}>
+          <p className={`text-sm break-words ${isActionMessage ? 'italic text-neutral-400' : ''}`}>
+            {isActionMessage ? message.content.slice(1, -1) : message.content}
+            {message.isEdited && (
+              <span className="text-xs text-neutral-500 ml-2">(edited)</span>
+            )}
+          </p>
+        </div>
+        <div className="flex items-center gap-2 mt-1">
+          {canDem && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onDem(message.id)}
+              disabled={loading}
+              className={`h-7 px-2 ${
+                hasDemmed 
+                  ? 'text-orange-500 hover:text-orange-600' 
+                  : 'text-neutral-500 hover:text-neutral-400'
+              }`}
+            >
+              <Flame className={`h-4 w-4 mr-1 ${hasDemmed ? 'fill-orange-500' : ''}`} />
+              <span className="text-xs">{message.demCount || 0}</span>
+            </Button>
+          )}
+          {canEditMessage() && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setEditContent(message.content);
+                setIsEditDialogOpen(true);
+              }}
+              className="h-7 px-2 text-neutral-500 hover:text-neutral-400 opacity-0 group-hover:opacity-100 transition-opacity"
+            >
+              Edit
+            </Button>
+          )}
+          {canDeleteMessage() && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-red-500 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent className="bg-neutral-900 border-neutral-800 text-neutral-50">
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete Message?</AlertDialogTitle>
+                  <AlertDialogDescription className="text-neutral-400">
+                    This action cannot be undone. The message will be permanently deleted.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel className="bg-neutral-800 text-neutral-50 hover:bg-neutral-700 border-neutral-700">
+                    Cancel
+                  </AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={() => onDelete(message.id)}
+                    className="bg-red-600 text-white hover:bg-red-700"
+                  >
+                    Delete
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
+        </div>
+      </div>
+
+      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+        <DialogContent className="bg-neutral-900 border-neutral-800 text-neutral-50">
+          <DialogHeader>
+            <DialogTitle>Edit Message</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="editContent">Message Content</Label>
+              <Input
+                id="editContent"
+                value={editContent}
+                onChange={(e) => setEditContent(e.target.value)}
+                className="bg-neutral-950 border-neutral-800"
+                autoFocus
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setIsEditDialogOpen(false)}
+              className="border-neutral-800"
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleEditMessage} className="bg-neutral-50 text-neutral-950 hover:bg-neutral-200">
+              Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
