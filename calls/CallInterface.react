@@ -1,0 +1,212 @@
+"use client";
+
+import React, { useState, useEffect, useRef } from "react";
+import { Call } from "@/entities/Call";
+import { User } from "@/entities/User";
+import { useToast } from "@/components/ui/use-toast";
+import { Button } from "@/components/ui/button";
+import { Mic, MicOff, Video, VideoOff, Phone, PhoneOff, Users } from "lucide-react";
+
+interface CallInterfaceProps {
+  roomId: string;
+  callType: "voice" | "video";
+  onEndCall: () => void;
+}
+
+export default function CallInterface({ roomId, callType, onEndCall }: CallInterfaceProps) {
+  const { toast } = useToast();
+  const [currentCall, setCurrentCall] = useState<any>(null);
+  const [isMuted, setIsMuted] = useState(false);
+  const [isVideoOff, setIsVideoOff] = useState(false);
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const localVideoRef = useRef<HTMLVideoElement>(null);
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+
+  useEffect(() => {
+    initializeCall();
+    return () => {
+      if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, []);
+
+  const initializeCall = async () => {
+    try {
+      const user = await User.me();
+      setCurrentUser(user);
+
+      // Request media permissions
+      const constraints = {
+        audio: true,
+        video: callType === "video"
+      };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      setLocalStream(stream);
+
+      if (localVideoRef.current && callType === "video") {
+        localVideoRef.current.srcObject = stream;
+      }
+
+      // Create or join call
+      const existingCalls = await Call.filter({ roomId, isActive: true });
+      
+      if (existingCalls.length > 0) {
+        // Join existing call
+        const call = existingCalls[0];
+        const updatedParticipants = [
+          ...(call.participants || []),
+          {
+            userId: user.id,
+            userName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email,
+            isMuted: false,
+            isVideoOff: false,
+            joinedAt: new Date().toISOString()
+          }
+        ];
+        await Call.update(call.id, { participants: updatedParticipants });
+        setCurrentCall({ ...call, participants: updatedParticipants });
+      } else {
+        // Create new call
+        const newCall = await Call.create({
+          roomId,
+          callType,
+          participants: [{
+            userId: user.id,
+            userName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email,
+            isMuted: false,
+            isVideoOff: false,
+            joinedAt: new Date().toISOString()
+          }],
+          startedAt: new Date().toISOString(),
+          isActive: true
+        });
+        setCurrentCall(newCall);
+      }
+
+      toast({
+        title: "Call Started",
+        description: `${callType === "video" ? "Video" : "Voice"} call initiated successfully`
+      });
+    } catch (error) {
+      console.error("Error initializing call:", error);
+      toast({
+        title: "Error",
+        description: "Failed to start call. Please check your permissions.",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const toggleMute = () => {
+    if (localStream) {
+      localStream.getAudioTracks().forEach(track => {
+        track.enabled = !track.enabled;
+      });
+      setIsMuted(!isMuted);
+    }
+  };
+
+  const toggleVideo = () => {
+    if (localStream && callType === "video") {
+      localStream.getVideoTracks().forEach(track => {
+        track.enabled = !track.enabled;
+      });
+      setIsVideoOff(!isVideoOff);
+    }
+  };
+
+  const handleEndCall = async () => {
+    try {
+      if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+      }
+
+      if (currentCall && currentUser) {
+        const updatedParticipants = (currentCall.participants || []).filter(
+          (p: any) => p.userId !== currentUser.id
+        );
+
+        if (updatedParticipants.length === 0) {
+          await Call.update(currentCall.id, {
+            isActive: false,
+            endedAt: new Date().toISOString()
+          });
+        } else {
+          await Call.update(currentCall.id, { participants: updatedParticipants });
+        }
+      }
+
+      onEndCall();
+    } catch (error) {
+      console.error("Error ending call:", error);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-neutral-950 z-50 flex flex-col">
+      <div className="flex-1 flex items-center justify-center p-4">
+        {callType === "video" ? (
+          <div className="relative w-full max-w-4xl aspect-video bg-neutral-900 rounded-lg overflow-hidden">
+            <video
+              ref={localVideoRef}
+              autoPlay
+              muted
+              playsInline
+              className="w-full h-full object-cover"
+            />
+            {isVideoOff && (
+              <div className="absolute inset-0 flex items-center justify-center bg-neutral-900">
+                <VideoOff className="h-16 w-16 text-neutral-600" />
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="flex flex-col items-center gap-4">
+            <div className="w-32 h-32 rounded-full bg-neutral-800 flex items-center justify-center">
+              <Users className="h-16 w-16 text-neutral-400" />
+            </div>
+            <p className="text-xl font-semibold">Voice Call Active</p>
+            <p className="text-neutral-400">
+              {currentCall?.participants?.length || 0} participant(s)
+            </p>
+          </div>
+        )}
+      </div>
+
+      <div className="p-6 bg-neutral-900 border-t border-neutral-800">
+        <div className="flex items-center justify-center gap-4">
+          <Button
+            size="icon"
+            variant={isMuted ? "destructive" : "secondary"}
+            onClick={toggleMute}
+            className="h-14 w-14 rounded-full"
+          >
+            {isMuted ? <MicOff className="h-6 w-6" /> : <Mic className="h-6 w-6" />}
+          </Button>
+
+          {callType === "video" && (
+            <Button
+              size="icon"
+              variant={isVideoOff ? "destructive" : "secondary"}
+              onClick={toggleVideo}
+              className="h-14 w-14 rounded-full"
+            >
+              {isVideoOff ? <VideoOff className="h-6 w-6" /> : <Video className="h-6 w-6" />}
+            </Button>
+          )}
+
+          <Button
+            size="icon"
+            variant="destructive"
+            onClick={handleEndCall}
+            className="h-14 w-14 rounded-full"
+          >
+            <PhoneOff className="h-6 w-6" />
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
