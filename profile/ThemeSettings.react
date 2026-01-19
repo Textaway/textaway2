@@ -1,0 +1,199 @@
+"use client";
+
+import React, { useState } from "react";
+import { User } from "@/entities/User";
+import { useToast } from "@/components/ui/use-toast";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Palette, Check } from "lucide-react";
+
+const PRESET_THEMES = [
+  { value: "dark", label: "Dark", bg: "bg-neutral-950", text: "text-neutral-50" },
+  { value: "light", label: "Light", bg: "bg-neutral-50", text: "text-neutral-950" },
+  { value: "blue", label: "Blue", bg: "bg-blue-950", text: "text-blue-50" },
+  { value: "purple", label: "Purple", bg: "bg-purple-950", text: "text-purple-50" },
+  { value: "green", label: "Green", bg: "bg-green-950", text: "text-green-50" }
+];
+
+interface ThemeSettingsProps {
+  currentUser: any;
+}
+
+export default function ThemeSettings({ currentUser }: ThemeSettingsProps) {
+  const { toast } = useToast();
+  const [selectedTheme, setSelectedTheme] = useState(currentUser.themeSettings?.theme || "dark");
+  const [customTheme, setCustomTheme] = useState({
+    primaryColor: currentUser.themeSettings?.customTheme?.primaryColor || "#3b82f6",
+    backgroundColor: currentUser.themeSettings?.customTheme?.backgroundColor || "#0a0a0a",
+    textColor: currentUser.themeSettings?.customTheme?.textColor || "#fafafa",
+    accentColor: currentUser.themeSettings?.customTheme?.accentColor || "#f59e0b"
+  });
+  const [loading, setLoading] = useState(false);
+
+  const handleSaveTheme = async () => {
+    setLoading(true);
+    try {
+      await User.updateMyUserData({
+        themeSettings: {
+          theme: selectedTheme,
+          customTheme: selectedTheme === "custom" ? customTheme : undefined
+        }
+      });
+      toast({ title: "Success", description: "Theme settings saved successfully." });
+      
+      // Apply theme to document
+      if (selectedTheme === "custom") {
+        document.documentElement.style.setProperty('--primary', customTheme.primaryColor);
+        document.documentElement.style.setProperty('--background', customTheme.backgroundColor);
+        document.documentElement.style.setProperty('--foreground', customTheme.textColor);
+        document.documentElement.style.setProperty('--accent', customTheme.accentColor);
+      }
+    } catch (error) {
+      console.error("Failed to save theme:", error);
+      toast({ title: "Error", description: "Failed to save theme settings.", variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6 bg-neutral-900 border border-neutral-800 rounded-lg p-6">
+      <div className="flex items-center gap-2 mb-4">
+        <Palette className="h-5 w-5 text-neutral-400" />
+        <h3 className="text-lg font-semibold">Theme Settings</h3>
+      </div>
+
+      <div className="space-y-4">
+        <Label>Preset Themes</Label>
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+          {PRESET_THEMES.map((theme) => (
+            <button
+              key={theme.value}
+              onClick={() => setSelectedTheme(theme.value)}
+              className={`p-4 rounded-lg border-2 transition-all ${
+                selectedTheme === theme.value
+                  ? 'border-neutral-50'
+                  : 'border-neutral-800 hover:border-neutral-700'
+              }`}
+            >
+              <div className={`w-full h-12 rounded ${theme.bg} mb-2 flex items-center justify-center`}>
+                {selectedTheme === theme.value && <Check className="h-5 w-5 text-neutral-50" />}
+              </div>
+              <p className="text-sm font-semibold">{theme.label}</p>
+            </button>
+          ))}
+          <button
+            onClick={() => setSelectedTheme("custom")}
+            className={`p-4 rounded-lg border-2 transition-all ${
+              selectedTheme === "custom"
+                ? 'border-neutral-50'
+                : 'border-neutral-800 hover:border-neutral-700'
+            }`}
+          >
+            <div className="w-full h-12 rounded bg-gradient-to-br from-purple-500 via-pink-500 to-orange-500 mb-2 flex items-center justify-center">
+              {selectedTheme === "custom" && <Check className="h-5 w-5 text-white" />}
+            </div>
+            <p className="text-sm font-semibold">Custom</p>
+          </button>
+        </div>
+      </div>
+
+      {selectedTheme === "custom" && (
+        <div className="space-y-4 pt-4 border-t border-neutral-800">
+          <Label>Custom Theme Colors</Label>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="primaryColor" className="text-xs">Primary Color</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="primaryColor"
+                  type="color"
+                  value={customTheme.primaryColor}
+                  onChange={(e) => setCustomTheme({ ...customTheme, primaryColor: e.target.value })}
+                  className="w-16 h-10 p-1 bg-neutral-950 border-neutral-800"
+                />
+                <Input
+                  type="text"
+                  value={customTheme.primaryColor}
+                  onChange={(e) => setCustomTheme({ ...customTheme, primaryColor: e.target.value })}
+                  className="flex-1 bg-neutral-950 border-neutral-800 text-xs"
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="backgroundColor" className="text-xs">Background</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="backgroundColor"
+                  type="color"
+                  value={customTheme.backgroundColor}
+                  onChange={(e) => setCustomTheme({ ...customTheme, backgroundColor: e.target.value })}
+                  className="w-16 h-10 p-1 bg-neutral-950 border-neutral-800"
+                />
+                <Input
+                  type="text"
+                  value={customTheme.backgroundColor}
+                  onChange={(e) => setCustomTheme({ ...customTheme, backgroundColor: e.target.value })}
+                  className="flex-1 bg-neutral-950 border-neutral-800 text-xs"
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="textColor" className="text-xs">Text Color</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="textColor"
+                  type="color"
+                  value={customTheme.textColor}
+                  onChange={(e) => setCustomTheme({ ...customTheme, textColor: e.target.value })}
+                  className="w-16 h-10 p-1 bg-neutral-950 border-neutral-800"
+                />
+                <Input
+                  type="text"
+                  value={customTheme.textColor}
+                  onChange={(e) => setCustomTheme({ ...customTheme, textColor: e.target.value })}
+                  className="flex-1 bg-neutral-950 border-neutral-800 text-xs"
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="accentColor" className="text-xs">Accent Color</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="accentColor"
+                  type="color"
+                  value={customTheme.accentColor}
+                  onChange={(e) => setCustomTheme({ ...customTheme, accentColor: e.target.value })}
+                  className="w-16 h-10 p-1 bg-neutral-950 border-neutral-800"
+                />
+                <Input
+                  type="text"
+                  value={customTheme.accentColor}
+                  onChange={(e) => setCustomTheme({ ...customTheme, accentColor: e.target.value })}
+                  className="flex-1 bg-neutral-950 border-neutral-800 text-xs"
+                />
+              </div>
+            </div>
+          </div>
+          <div className="p-4 rounded-lg border border-neutral-800" style={{
+            backgroundColor: customTheme.backgroundColor,
+            color: customTheme.textColor
+          }}>
+            <p className="text-sm mb-2">Theme Preview</p>
+            <Button size="sm" style={{ backgroundColor: customTheme.primaryColor }}>
+              Primary Button
+            </Button>
+            <span className="ml-2 text-xs" style={{ color: customTheme.accentColor }}>Accent Text</span>
+          </div>
+        </div>
+      )}
+
+      <div className="flex justify-end pt-4">
+        <Button onClick={handleSaveTheme} disabled={loading} className="bg-neutral-50 text-neutral-950 hover:bg-neutral-200">
+          {loading ? "Saving..." : "Save Theme"}
+        </Button>
+      </div>
+    </div>
+  );
+}
