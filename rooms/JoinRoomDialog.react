@@ -1,0 +1,194 @@
+"use client";
+
+import React, { useState } from "react";
+import { Room } from "@/entities/Room";
+import { RoomMember } from "@/entities/RoomMember";
+import { User } from "@/entities/User";
+import { ActivityLog } from "@/entities/ActivityLog";
+import { Ban } from "@/entities/Ban";
+import { useRouter } from "next/navigation";
+import { createPageUrl } from "@/utils";
+import { useToast } from "@/components/ui/use-toast";
+import { LogIn } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+
+interface JoinRoomDialogProps {
+  onJoinSuccess: () => void;
+}
+
+export default function JoinRoomDialog({ onJoinSuccess }: JoinRoomDialogProps) {
+  const { toast } = useToast();
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [inviteCode, setInviteCode] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const handleJoin = async () => {
+    if (!inviteCode.trim()) {
+      toast({
+        title: "Error",
+        description: "Please enter an invite code",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const user = await User.me();
+
+      const rooms = await Room.filter({ inviteCode: inviteCode.toUpperCase() });
+      
+      if (rooms.length === 0) {
+        toast({
+          title: "Error",
+          description: "Invalid invite code",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      const room = rooms[0];
+
+      const bans = await Ban.filter({ roomId: room.id, userId: user.id });
+      if (bans.length > 0) {
+        const ban = bans[0];
+        if (ban.expiresAt) {
+          const expiryDate = new Date(ban.expiresAt);
+          if (expiryDate > new Date()) {
+            toast({
+              title: "You are temporarily kicked",
+              description: `You can rejoin in ${Math.ceil((expiryDate.getTime() - new Date().getTime()) / 60000)} minutes. Reason: ${ban.reason}`,
+              variant: "destructive"
+            });
+            return;
+          } else {
+            // Ban expired, delete it and let the user join
+            await Ban.delete(ban.id);
+          }
+        } else {
+          // Permanent ban
+          toast({
+            title: "You are banned",
+            description: `You are permanently banned from this room. Reason: ${ban.reason}`,
+            variant: "destructive"
+          });
+          return;
+        }
+      }
+
+      const existingMembership = await RoomMember.filter({ 
+        roomId: room.id, 
+        userId: user.id 
+      });
+
+      if (existingMembership.length > 0) {
+        toast({
+          title: "Already a member",
+          description: "You're already in this room",
+        });
+        router.push(createPageUrl('Room', { id: room.id }));
+        setOpen(false);
+        return;
+      }
+
+      await RoomMember.create({
+        roomId: room.id,
+        userId: user.id,
+        userName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email,
+        role: "member",
+        joinedAt: new Date().toISOString()
+      });
+
+      await Room.update(room.id, {
+        memberCount: (room.memberCount || 0) + 1
+      });
+
+      await ActivityLog.create({
+        userId: user.id,
+        actionType: "joinRoom",
+        description: `Joined room: "${room.name}"`,
+        ipAddress: "127.0.0.1",
+        userAgent: "WebApp (Simulated)",
+        location: "Simulated Location"
+      });
+
+      toast({
+        title: "Success",
+        description: `Joined ${room.name}`,
+      });
+
+      setOpen(false);
+      setInviteCode("");
+      onJoinSuccess();
+      router.push(createPageUrl('Room', { id: room.id }));
+    } catch (error) {
+      console.error('Error joining room:', error);
+      toast({
+        title: "Error",
+        description: "Failed to join room",
+        variant: "destructive"
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button className="bg-neutral-50 text-neutral-950 hover:bg-neutral-200 font-semibold">
+          <LogIn className="h-4 w-4 mr-2" />
+          Join with Code
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="bg-neutral-900 border-neutral-800 text-neutral-50">
+        <DialogHeader>
+          <DialogTitle>Join a Room</DialogTitle>
+          <DialogDescription className="text-neutral-400">
+            Enter an invite code to join a room
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4 py-4">
+          <div className="space-y-2">
+            <Label htmlFor="inviteCode">Invite Code</Label>
+            <Input
+              id="inviteCode"
+              value={inviteCode}
+              onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
+              placeholder="Enter code"
+              className="bg-neutral-950 border-neutral-800 text-neutral-50 uppercase"
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => setOpen(false)}
+            className="border-neutral-800 text-neutral-50 hover:bg-neutral-800"
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={handleJoin}
+            disabled={loading}
+            className="bg-neutral-50 text-neutral-950 hover:bg-neutral-200"
+          >
+            {loading ? "Joining..." : "Join Room"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
