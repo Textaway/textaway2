@@ -1,0 +1,86 @@
+"use client";
+
+import React from "react";
+import { Bot as BotIcon, CheckCircle, Users, Sparkle } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { useToast } from "@/components/ui/use-toast";
+
+interface BotCardProps {
+  bot: any;
+  currentUser: any;
+  onUpdate?: () => void;
+}
+
+export default function BotCard({ bot, currentUser, onUpdate }: BotCardProps) {
+  const { toast } = useToast();
+
+  const getCategoryColor = (category: string) => {
+    const colors: Record<string, string> = {
+      moderation: "bg-red-900 text-red-100",
+      utility: "bg-blue-900 text-blue-100",
+      fun: "bg-yellow-900 text-yellow-100",
+      music: "bg-purple-900 text-purple-100",
+      gaming: "bg-green-900 text-green-100",
+      other: "bg-neutral-700 text-neutral-100"
+    };
+    return colors[category] || "bg-neutral-700 text-neutral-100";
+  };
+
+  const handleViewBot = () => {
+    toast({
+      title: "Bot Details",
+      description: `${bot.name} - ${bot.description}`,
+    });
+  };
+
+  return (
+    <div className="p-6 rounded-lg border border-neutral-800 bg-neutral-900 hover:bg-neutral-850 transition-all">
+      <div className="flex items-start justify-between mb-4">
+        <div className="flex items-center gap-3">
+          {bot.iconUrl ? (
+            <img 
+              src={bot.iconUrl} 
+              alt={bot.name} 
+              className="w-12 h-12 rounded-full object-cover border-2 border-neutral-700"
+            />
+          ) : (
+            <div className="w-12 h-12 rounded-full bg-neutral-800 flex items-center justify-center">
+              <BotIcon className="h-6 w-6 text-neutral-400" />
+            </div>
+          )}
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="font-bold text-lg">{bot.name}</h3>
+              {bot.isVerified && (
+                <CheckCircle className="h-5 w-5 text-blue-500" title="Verified Bot" />
+              )}
+            </div>
+            <code className="text-xs text-neutral-500 font-mono">{bot.trigger}</code>
+          </div>
+        </div>
+      </div>
+
+      <p className="text-sm text-neutral-400 mb-4 line-clamp-3">{bot.description}</p>
+
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Badge className={getCategoryColor(bot.category)}>
+            {bot.category}
+          </Badge>
+          <div className="flex items-center gap-1 text-xs text-neutral-500">
+            <Users className="h-3 w-3" />
+            {bot.installCount || 0}
+          </div>
+        </div>
+        <Button
+          size="sm"
+          onClick={handleViewBot}
+          className="bg-neutral-50 text-neutral-950 hover:bg-neutral-200"
+        >
+          View Details
+        </Button>
+      </div>
+    </div>
+  );
+}
